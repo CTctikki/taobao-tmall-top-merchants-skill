@@ -19,9 +19,9 @@ description: 为指定商品类目自动生成淘宝/天猫top商家清单与招
 4. 运行 `scripts/create_job.py <类目>`。检查生成的查询词、目标词和排除词；只在明显歧义时向用户确认商品边界。
 5. 运行 `scripts/mine_taobao.py` 发现淘宝与天猫候选店铺。默认每个查询2页、间隔20秒，禁止并发轰炸。
 6. 运行 `scripts/audit_shops.py` 按精确店铺名反查商品结构并执行30%门槛。候选采用分层召回：高发现SPU直接审计；低露出但覆盖多个查询词或店名含类目经营信号的淘宝/C店也进入审计，避免平台排序偏差漏店。
-7. 运行 `scripts/audit_storefronts.py` 取得正式店铺链接、`shopId`、`sellerId` 和店铺类型。
+7. 运行 `scripts/audit_storefronts.py` 取得正式店铺链接、`shopId`、`sellerId` 和店铺类型。天猫店优先在店铺头部悬停“查看资质”，打开“查看商家公示信息”对应的 `liangzhao.htm` 链接确认持证主体；若该资质页触发滑块或 `_____tmd__`，记录“主体未确认”并等待人工验证，不得用企业搜索第一名代替。
 8. 运行 `scripts/enrich_companies.py discover` 获取企业候选；多候选禁止自动选第一名。需要商标交叉验证时创建 `trademark_queries.json`，运行 `scripts/crosscheck_trademarks.py`，仅将品牌词和相关国际分类同时命中的结果作为证据。结合店铺资质页、商标权利人、品牌官网或同品类生产证据生成 `subjects.json`，再运行 `enrich` 补工商与联系方式。
-9. 运行 `scripts/build_workbook.py` 生成六张表：概览、正式招商商家、主体核验、未确认字段、淘汰商家、口径与复用。
+9. 运行 `scripts/build_workbook.py` 生成六张表：概览、正式招商商家、主体核验、未确认字段、淘汰商家、口径与复用。`audit_errors.json` 中的风控、超时和显式跳过店铺必须写入“未确认字段”及概览的“未完成审计”，不得混入淘汰商家或静默遗漏。
 10. 运行 `scripts/verify_job.py`，并使用电子表格工具完成公式重算和所有工作表视觉检查后交付。
 
 ## 判定纪律
@@ -39,7 +39,7 @@ description: 为指定商品类目自动生成淘宝/天猫top商家清单与招
 
 - 访问间隔保持18–22秒；遇风控立即停止，不换账号、不绕过验证。
 - 只操作用户已登录的浏览器会话；不要导出Cookie。
-- 启动脚本前把 Skill 根目录和任务目录解析为绝对路径；不要同时叠加仓库前缀与当前工作目录。每一步写入 `work/<job>/` 中间JSON。重跑必须跳过已完成查询和店铺。Browser Bridge 的单次 `operation aborted`、超时或连接重置最多重试1次；单店仍失败时写入 `audit_errors.json` 并继续其他店。验证码、滑块、访问拒绝等风控错误不得自动重试。若某个低价值店持续占用会话，可换新会话并用 `--skip-shop` 显式跳过，禁止静默丢失。
+- 启动脚本前把 Skill 根目录和任务目录解析为绝对路径；不要同时叠加仓库前缀与当前工作目录。每一步写入 `work/<job>/` 中间JSON。重跑必须跳过已完成查询和店铺。Browser Bridge 的单次 `operation aborted`、超时或连接重置最多重试1次；页面内 MTop 请求以 `MTOP_REQUEST_TIMEOUT` 有界退出，单店仍失败时写入 `audit_errors.json` 并继续其他店。除正文验证码文案外，还要检测指向 `_____tmd__` 的隐藏挑战 iframe；两者都属于淘宝风控，必须立即停止，不得当作普通超时自动重试。若某个低价值店持续占用会话，可换新会话并用 `--skip-shop` 显式跳过，禁止静默丢失。
 - API Key、Bearer Token、Cookie、Authorization 头禁止写入脚本、日志、Git或工作簿。
 
 ## 详细资料

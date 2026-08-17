@@ -72,6 +72,15 @@ def audit_rows(job, target, rows):
     }
 
 
+def classify_browser_failure(message):
+    text = str(message or "")
+    if "TAOBAO_RISK_CONTROL" in text:
+        return "risk_control"
+    if any(term in text.lower() for term in ["timed out", "timeout", "operation was aborted", "bridge disconnected", "connection reset"]):
+        return "browser_transient_error"
+    return "browser_error"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-dir", required=True)
@@ -108,16 +117,17 @@ def main():
             rows = run_o2(args.session, "eval", make_search_script(shop_name, pages))
         except BrowserTransientError as error:
             message = str(error)
-            errors[shop_name] = {"status": "browser_transient_error", "reason": message, "target": target}
+            errors[shop_name] = {"status": classify_browser_failure(message), "reason": message, "target": target}
             write_json(error_path, errors)
             print(f"  browser_error={message}; recorded and continuing", flush=True)
             continue
         except RuntimeError as error:
             message = str(error)
-            if "TAOBAO_RISK_CONTROL" in message:
-                raise
-            errors[shop_name] = {"status": "browser_error", "reason": message, "target": target}
+            status = classify_browser_failure(message)
+            errors[shop_name] = {"status": status, "reason": message, "target": target}
             write_json(error_path, errors)
+            if status == "risk_control":
+                raise
             print(f"  browser_error={message}; recorded and continuing", flush=True)
             continue
         existing[shop_name] = audit_rows(job, target, rows)

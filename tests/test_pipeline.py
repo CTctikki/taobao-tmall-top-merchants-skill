@@ -5,13 +5,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from openpyxl import load_workbook
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_workbook import build
-from audit_shops import select_candidates
-from common import BrowserTransientError, classify_item, parse_sales_lower_bound, run_o2
+from audit_shops import classify_browser_failure, select_candidates
+from common import BrowserTransientError, classify_item, make_search_script, parse_sales_lower_bound, run_o2
 from create_job import create_job
 from crosscheck_trademarks import match_trademarks
 from verify_job import verify
@@ -72,6 +74,17 @@ class PipelineTests(unittest.TestCase):
             run_o2("session", "eval", "script containing 验证码 text", timeout=1)
         self.assertEqual(str(context.exception), "webcli timed out after 1 seconds")
 
+    def test_search_script_detects_hidden_challenge_and_bounds_mtop_wait(self):
+        script = make_search_script("按摩梳", 2)
+        self.assertIn("_____tmd__", script)
+        self.assertIn("TAOBAO_RISK_CONTROL", script)
+        self.assertIn("Promise.race", script)
+        self.assertIn("MTOP_REQUEST_TIMEOUT", script)
+
+    def test_risk_control_is_recorded_separately_from_transient_failures(self):
+        self.assertEqual(classify_browser_failure("Error: TAOBAO_RISK_CONTROL"), "risk_control")
+        self.assertEqual(classify_browser_failure("webcli timed out after 90 seconds"), "browser_transient_error")
+
     def test_workbook_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             job_dir = Path(directory)
@@ -114,7 +127,24 @@ class PipelineTests(unittest.TestCase):
             (job_dir / "storefronts.json").write_text("{}", encoding="utf-8")
             (job_dir / "company_candidates.json").write_text("{}", encoding="utf-8")
             (job_dir / "company_enrichment.json").write_text("{}", encoding="utf-8")
+            (job_dir / "audit_errors.json").write_text(
+                json.dumps(
+                    {
+                        "风控待续跑店": {
+                            "status": "risk_control",
+                            "reason": "TAOBAO_RISK_CONTROL",
+                            "target": {"platform": "淘宝", "shop_url": "https://shop.example/risk"},
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
             workbook = build(job_dir)
+            loaded = load_workbook(workbook, data_only=False)
+            unresolved_values = [cell.value for row in loaded["未确认字段"].iter_rows() for cell in row]
+            self.assertIn("风控待续跑店", unresolved_values)
+            self.assertIn("店铺商品结构审计", unresolved_values)
             result = verify(job_dir, workbook)
             self.assertEqual(result["formal_records"], 2)
             self.assertEqual(result["platforms"], ["天猫", "淘宝"])
@@ -125,6 +155,10 @@ class SkillMetadataTests(unittest.TestCase):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("name: taobao-tmall-top-merchants", text)
         self.assertIn("淘宝/天猫top商家清单", text)
+        self.assertIn("_____tmd__", text)
+        self.assertIn("MTOP_REQUEST_TIMEOUT", text)
+        self.assertIn("查看商家公示信息", text)
+        self.assertIn("liangzhao.htm", text)
         self.assertNotIn("Bearer MX", text)
 
 

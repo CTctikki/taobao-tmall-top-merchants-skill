@@ -45,6 +45,41 @@ def selected_company(enrichment, shop):
     return selected or (candidates[0] if len(candidates) == 1 else None) or {}
 
 
+def prepare_audit_failures(job_dir, job):
+    errors = load_optional(job_dir / "audit_errors.json", {})
+    labels = {
+        "risk_control": "淘宝风控挑战（需人工验证）",
+        "browser_transient_error": "Browser Bridge/MTop瞬时超时",
+        "browser_error": "浏览器错误",
+        "skipped_by_operator": "持续异常后显式跳过",
+    }
+    actions = {
+        "risk_control": "用户完成淘宝滑块/验证码后从断点续跑",
+        "browser_transient_error": "恢复Bridge后换新会话低频补跑；出现风控立即停止",
+        "browser_error": "先运行webcli doctor诊断，再按错误类型补跑",
+        "skipped_by_operator": "恢复后移除--skip-shop并定向补跑",
+    }
+    failures = []
+    for shop_name, record in errors.items():
+        target = record.get("target", {})
+        status = record.get("status", "browser_error")
+        first_line = str(record.get("reason", "")).splitlines()[0]
+        reason = labels.get(status, status)
+        if first_line and first_line not in reason:
+            reason = f"{reason}；{first_line}"
+        failures.append({
+            "category": job["category"],
+            "platform": target.get("platform", ""),
+            "shop_name": shop_name,
+            "company": "",
+            "missing_fields": "店铺商品结构审计",
+            "reason": reason,
+            "next_step": actions.get(status, "核对错误账本后定向补跑"),
+            "store_url": target.get("shop_url", ""),
+        })
+    return failures
+
+
 def prepare_rows(job_dir):
     job = load_job(job_dir)
     audit = load_optional(job_dir / "assortment_audit.json", {})
@@ -97,7 +132,7 @@ def prepare_rows(job_dir):
         absent = [label for label, key in fields if not row.get(key)]
         if absent:
             missing.append({"category": job["category"], "platform": row["platform"], "shop_name": row["shop_name"], "company": row["company"], "missing_fields": "、".join(absent), "reason": "主体未唯一确认" if not row["company"] else "公开渠道未披露或本次MCP未返回", "next_step": row["pending"], "store_url": row["store_url"]})
-    return job, formal, rejected, missing
+    return job, formal, rejected, missing, prepare_audit_failures(job_dir, job)
 
 
 def style_title(sheet, title, subtitle, end_column):
@@ -136,13 +171,14 @@ def style_table(sheet, header_row, widths, row_height=48):
     sheet.sheet_view.showGridLines = False
 
 
-def add_overview(workbook, job, formal, rejected, missing):
+def add_overview(workbook, job, formal, rejected, missing, audit_failures):
     sheet = workbook.active
     sheet.title = "概览"
     style_title(sheet, f'{job["category"]}｜淘宝 + 天猫TOP商家招商概览', f'正式门槛：目标SPU≥{job["min_spu"]}、店内目标占比≥{job["min_share"]:.0%}；≥{job["high_match_share"]:.0%}标记高匹配。淘宝/C店不是淘汰条件。', 8)
     sheet.append(["指标", "总计", "天猫", "淘宝", "高匹配", "达标", "主体已补", "存在未确认字段"])
     sheet.append(["正式招商记录", len(formal), sum(row["platform"] == "天猫" for row in formal), sum(row["platform"] == "淘宝" for row in formal), sum(row["match_grade"] == "高匹配" for row in formal), sum(row["match_grade"] == "达标" for row in formal), sum(bool(row["company"]) for row in formal), len(missing)])
     sheet.append(["淘汰记录", len(rejected), "", "", "", "", "", ""])
+    sheet.append(["未完成审计", len(audit_failures), sum(row["platform"] == "天猫" for row in audit_failures), sum(row["platform"] == "淘宝" for row in audit_failures), "", "", "", "详见未确认字段"])
     sheet.append([])
     sheet.append(["口径", "说明", "", "", "", "", "", ""])
     notes = [("类目范围", job.get("scope_note", "")), ("精准命中", "按精确店铺名反聚合商品，并以唯一商品ID计SPU。"), ("销量", "付款人数展示下限用于相对排序，不等同近30天月销。"), ("主体", "公司可能是品牌/生产/运营候选，最终以店铺资质页为准；多候选不自动取第一名。")]
@@ -190,7 +226,7 @@ def add_subjects(workbook, job_dir, formal):
     style_table(sheet, 3, [26, 10, 20, 32, 18, 13, 24, 12, 26, 28, 42, 34], 58)
 
 
-def add_missing(workbook, formal, missing):
+def add_missing(workbook, formal, missing, audit_failures):
     sheet = workbook.create_sheet("未确认字段")
     style_title(sheet, "未确认字段汇总｜查不到的数据与下一步方案", "空白不是没有数据，而是本轮没有足够证据安全归属到店铺。优先取得店铺资质页主体全称或信用代码。", 8)
     sheet.append(["字段", "正式记录数", "已取得数", "缺失数", "建议动作", "", "", ""])
@@ -202,7 +238,7 @@ def add_missing(workbook, formal, missing):
     detail_header = sheet.max_row + 2
     for column, value in enumerate(["类目", "平台", "店铺名", "当前候选公司", "未确认字段", "原因", "建议动作", "店铺链接"], 1):
         sheet.cell(detail_header, column, value)
-    for row in missing:
+    for row in missing + audit_failures:
         sheet.append([row[key] for key in ["category", "platform", "shop_name", "company", "missing_fields", "reason", "next_step", "store_url"]])
     style_table(sheet, 3, [12, 10, 26, 30, 34, 42, 44, 42], 52)
     for cell in sheet[detail_header]:
@@ -243,13 +279,13 @@ def add_method(workbook, job):
 
 def build(job_dir, output=None):
     job_dir = Path(job_dir).resolve()
-    job, formal, rejected, missing = prepare_rows(job_dir)
+    job, formal, rejected, missing, audit_failures = prepare_rows(job_dir)
     workbook = Workbook()
     workbook.properties.creator = "taobao-tmall-top-merchants"
-    add_overview(workbook, job, formal, rejected, missing)
+    add_overview(workbook, job, formal, rejected, missing, audit_failures)
     add_formal(workbook, job, formal)
     add_subjects(workbook, job_dir, formal)
-    add_missing(workbook, formal, missing)
+    add_missing(workbook, formal, missing, audit_failures)
     add_rejected(workbook, job, rejected)
     add_method(workbook, job)
     for sheet in workbook.worksheets:
@@ -275,4 +311,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

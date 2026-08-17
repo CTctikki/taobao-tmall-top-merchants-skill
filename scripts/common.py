@@ -117,13 +117,16 @@ def make_search_script(query, pages):
     return (
         "(async()=>{"
         "const text=document.body?document.body.innerText:'';"
-        f"if({json.dumps(RISK_TERMS, ensure_ascii=False)}.some(function(t){{return text.includes(t)}})){{throw new Error('TAOBAO_RISK_CONTROL')}};"
+        "const hiddenChallenge=Boolean(document.querySelector('iframe[src*=\"_____tmd__\"]'));"
+        f"if(hiddenChallenge||{json.dumps(RISK_TERMS, ensure_ascii=False)}.some(function(t){{return text.includes(t)}})){{throw new Error('TAOBAO_RISK_CONTROL')}};"
         "const u=performance.getEntriesByType('resource').map(function(e){return e.name}).find(function(x){return x.includes('appId%22%3A%2234385')});"
         "if(!u){throw new Error('search template missing; open a Taobao search result page first')};"
         "const outer=JSON.parse(new URL(u).searchParams.get('data'));const base=JSON.parse(outer.params);const out=[];"
         f"for(let page=1;page<={int(pages)};page++){{const p=Object.assign({{}},base);"
         f"Object.assign(p,{{q:encodeURIComponent({query_json}),page:page,n:48,pageSize:48,p4pIds:null,p4pS:null,itemIds:null,bcoffset:'',ntoffset:''}});"
-        "const r=await lib.mtop.request({api:'mtop.relationrecommend.WirelessRecommend.recommend',v:'2.0',needLogin:false,data:{appId:'34385',params:JSON.stringify(p)}});"
+        "const request=lib.mtop.request({api:'mtop.relationrecommend.WirelessRecommend.recommend',v:'2.0',needLogin:false,data:{appId:'34385',params:JSON.stringify(p)}});"
+        "const requestTimeout=new Promise(function(_,reject){setTimeout(function(){reject(new Error('MTOP_REQUEST_TIMEOUT'))},20000)});"
+        "const r=await Promise.race([request,requestTimeout]);"
         "const items=r.data&&r.data.itemsArray?r.data.itemsArray:[];items.forEach(function(x){out.push({query:"
         + query_json
         + ",page:page,item_id:String(x.item_id||''),title:x.title||'',shop:x.shopInfo?x.shopInfo.title:'',shop_url:x.shopInfo?x.shopInfo.url:'',user_id:String(x.userId||''),sales:x.realSales||'',iconList:x.iconList||'',auctionURL:x.auctionURL||'',leafCategory:String(x.leafCategory||'')})});"
