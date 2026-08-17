@@ -11,11 +11,11 @@ import requests
 from common import ensure_job_dir, write_json
 
 
-def load_qcc_server(config_path):
+def load_qcc_server(config_path, server_name="qcc-company"):
     config = tomllib.loads(Path(config_path).read_text(encoding="utf-8-sig"))
-    server = config.get("mcp_servers", {}).get("qcc-company")
+    server = config.get("mcp_servers", {}).get(server_name)
     if not server:
-        raise RuntimeError("qcc-company MCP is not configured; run preflight.py")
+        raise RuntimeError(f"{server_name} MCP is not configured; run preflight.py")
     auth = os.environ.get("QCC_AUTH")
     if not auth:
         auth = server.get("http_headers", {}).get("Authorization", "")
@@ -147,4 +147,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

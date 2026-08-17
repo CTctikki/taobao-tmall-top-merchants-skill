@@ -28,6 +28,10 @@
 
 由Agent基于证据确认的完整公司名映射：店铺名、公司名、主体角色、置信度、证据URL和备注。
 
+## trademark_queries.json / company_trademarks.json
+
+前者按店铺指定 `brand_terms`、`relevant_classes` 和候选 `companies`；后者保存企业MCP有效商标返回及品牌词+类别匹配结果，用于多候选交叉确认。
+
 ## company_enrichment.json
 
 确认主体的工商登记与联系方式原始返回。缺失值保持空白。
@@ -35,4 +39,3 @@
 ## 工作簿
 
 正式表字段至少包括：类目、平台/店铺类型、店铺名、目标SPU、精确店铺SPU、相关占比、匹配等级、付款展示下限、店铺链接、shopId/sellerId、公司名称、法人、电话、邮箱、注册地址、成立日期、信用代码、主体角色/置信度、来源和待确认项。
-

@@ -13,6 +13,7 @@ from build_workbook import build
 from audit_shops import select_candidates
 from common import BrowserTransientError, classify_item, parse_sales_lower_bound, run_o2
 from create_job import create_job
+from crosscheck_trademarks import match_trademarks
 from verify_job import verify
 
 
@@ -29,6 +30,17 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(parse_sales_lower_bound("1.2万人付款"), 12000)
         self.assertEqual(parse_sales_lower_bound("800+人付款"), 800)
         self.assertIsNone(parse_sales_lower_bound(""))
+
+    def test_trademark_crosscheck_requires_brand_and_relevant_class(self):
+        marks = [
+            {"商标名称": "RAFFINI", "国际分类": "21类 厨房洁具"},
+            {"商标名称": "RAFFINI", "国际分类": "33类 酒"},
+            {"商标名称": "OTHER", "国际分类": "21类 厨房洁具"},
+        ]
+        self.assertEqual(
+            match_trademarks(marks, ["raffini"], ["8", "20", "21"]),
+            [marks[0]],
+        )
 
     def test_tiered_audit_recovers_low_exposure_c_stores(self):
         with tempfile.TemporaryDirectory() as directory:
