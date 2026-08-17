@@ -3,11 +3,16 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import quote
 
 
 RISK_TERMS = ["验证码拦截", "访问被拒绝", "请按照说明进行验证", "滑动验证", "登录后查看"]
+
+
+class BrowserTransientError(RuntimeError):
+    pass
 
 
 def clean_title(value):
@@ -66,21 +71,36 @@ def parse_sales_lower_bound(value):
     return int(match.group(1)) if match else None
 
 
-def run_o2(session, command, *args, timeout=180):
+def run_o2(session, command, *args, timeout=90, transient_retries=1):
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
-    completed = subprocess.run(
-        ["o2", "launch", "webcli", "browser", session, command, *args],
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        check=False,
-    )
-    if completed.returncode:
-        raise RuntimeError((completed.stderr or completed.stdout).strip())
+    completed = None
+    for attempt in range(transient_retries + 1):
+        try:
+            completed = subprocess.run(
+                ["o2", "launch", "webcli", "browser", session, command, *args],
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                check=False,
+            )
+            message = (completed.stderr or completed.stdout).strip()
+        except subprocess.TimeoutExpired:
+            message = f"webcli timed out after {timeout} seconds"
+            completed = None
+        transient = any(term in message.lower() for term in ["operation was aborted", "timed out", "timeout", "bridge disconnected", "connection reset"])
+        if completed is not None and completed.returncode == 0:
+            break
+        if not transient or attempt >= transient_retries:
+            if transient:
+                raise BrowserTransientError(message)
+            raise RuntimeError(message)
+        time.sleep(2 ** attempt)
+    if completed is None:
+        raise RuntimeError("webcli failed without a process result")
     output = completed.stdout.strip()
     try:
         return json.loads(output)
@@ -126,4 +146,3 @@ def load_job(job_dir):
 
 def write_json(path, data):
     Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-

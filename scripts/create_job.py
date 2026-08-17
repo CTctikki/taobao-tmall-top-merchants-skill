@@ -31,6 +31,7 @@ PROFILES = {
         "exclude_patterns": ["宠物|猫咪|狗狗|犬用", "假发|娃娃|模型", "教程|维修|租赁"],
         "accessory_patterns": ["替换头|替换齿|配件|收纳袋|包装盒|充电线|底座|保护套|梳套"],
         "electric_patterns": ["电动|充电|插电|红光|激光|震动|智能|射频|微电流"],
+        "merchant_hint_patterns": ["梳|头疗|养生|个护|美发"],
         "exclude_electric": False,
         "scope_note": "按摩梳类目默认同时保留手动与电动按摩梳；排除宠物梳、假发梳、配件和非商品。",
     }
@@ -44,6 +45,7 @@ def generic_profile(category):
         "exclude_patterns": ["宠物|猫咪|狗狗|犬用", "教程|维修|租赁|模型|玩具"],
         "accessory_patterns": ["配件|替换|收纳袋|包装盒|说明书|保护套"],
         "electric_patterns": ["电动|充电|插电|恒温|加热|红光|激光|智能|震动"],
+        "merchant_hint_patterns": [],
         "exclude_electric": False,
         "scope_note": "默认保留命中类目词的成品，排除配件、宠物用品和非商品；请抽查后完善同义词。",
     }
@@ -64,7 +66,9 @@ def create_job(category, job_dir, queries=None, exclude_electric=None):
         "pages": 2,
         "interval_seconds": 20,
         "minimum_discovery_spu": 3,
-        "max_candidate_shops": 40,
+        "secondary_discovery_spu": 1,
+        "secondary_query_coverage": 4,
+        "max_candidate_shops": 50,
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     write_json(ensure_job_dir(job_dir) / "job.json", job)
@@ -89,4 +93,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

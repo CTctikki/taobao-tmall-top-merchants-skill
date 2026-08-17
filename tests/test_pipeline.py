@@ -3,13 +3,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_workbook import build
-from common import classify_item, parse_sales_lower_bound
+from audit_shops import select_candidates
+from common import BrowserTransientError, classify_item, parse_sales_lower_bound, run_o2
 from create_job import create_job
 from verify_job import verify
 
@@ -27,6 +29,36 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(parse_sales_lower_bound("1.2万人付款"), 12000)
         self.assertEqual(parse_sales_lower_bound("800+人付款"), 800)
         self.assertIsNone(parse_sales_lower_bound(""))
+
+    def test_tiered_audit_recovers_low_exposure_c_stores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job = create_job("按摩梳", directory)
+            rows = [
+                {"shop_name": "大综合百货", "discovered_target_spu": 1, "queries": ["按摩梳"]},
+                {"shop_name": "叶梳匠品牌店", "discovered_target_spu": 1, "queries": ["按摩梳"]},
+                {"shop_name": "低露出品牌店", "discovered_target_spu": 1, "queries": ["a", "b", "c", "d"]},
+            ]
+            selected = select_candidates(job, rows)
+            self.assertEqual({row["shop_name"] for row in selected}, {"叶梳匠品牌店", "低露出品牌店"})
+
+    @patch("common.time.sleep", return_value=None)
+    @patch("common.subprocess.run")
+    def test_browser_transient_abort_retries_without_retrying_risk_control(self, run, _sleep):
+        aborted = type("Result", (), {"returncode": 1, "stdout": "", "stderr": "This operation was aborted"})()
+        success = type("Result", (), {"returncode": 0, "stdout": '{"ok": true}', "stderr": ""})()
+        run.side_effect = [aborted, success]
+        self.assertEqual(run_o2("session", "eval", "1+1"), {"ok": True})
+        self.assertEqual(run.call_count, 2)
+
+    @patch("common.time.sleep", return_value=None)
+    @patch("common.subprocess.run")
+    def test_browser_timeout_raises_structured_transient_error(self, run, _sleep):
+        import subprocess
+
+        run.side_effect = subprocess.TimeoutExpired(["o2", "browser"], 1)
+        with self.assertRaises(BrowserTransientError) as context:
+            run_o2("session", "eval", "script containing 验证码 text", timeout=1)
+        self.assertEqual(str(context.exception), "webcli timed out after 1 seconds")
 
     def test_workbook_contract(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -86,4 +118,3 @@ class SkillMetadataTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

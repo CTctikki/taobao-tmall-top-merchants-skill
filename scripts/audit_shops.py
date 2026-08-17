@@ -1,9 +1,26 @@
 import argparse
 import json
+import re
 import time
 from datetime import datetime
 
-from common import classify_item, clean_title, ensure_job_dir, load_job, make_search_script, normalize, open_search, platform_name, run_o2, write_json
+from common import BrowserTransientError, classify_item, clean_title, ensure_job_dir, load_job, make_search_script, normalize, open_search, platform_name, run_o2, write_json
+
+
+def select_candidates(job, rows, limit=None):
+    selected = []
+    hint_patterns = [pattern for pattern in job.get("merchant_hint_patterns", []) if pattern]
+    hints = re.compile("|".join(f"(?:{pattern})" for pattern in hint_patterns), re.I) if hint_patterns else None
+    for row in rows:
+        discovery = row.get("discovered_target_spu", 0)
+        coverage = len(row.get("queries", []))
+        primary = discovery >= job.get("minimum_discovery_spu", 3)
+        broad_recall = discovery >= job.get("secondary_discovery_spu", 1) and coverage >= job.get("secondary_query_coverage", 4)
+        merchant_hint = discovery >= job.get("secondary_discovery_spu", 1) and bool(hints and hints.search(row.get("shop_name", "")))
+        if primary or broad_recall or merchant_hint:
+            selected.append({**row, "audit_reason": "primary" if primary else "query_coverage" if broad_recall else "merchant_hint"})
+    selected.sort(key=lambda row: (0 if row["audit_reason"] == "primary" else 1, -row.get("discovered_target_spu", 0), -len(row.get("queries", [])), row["shop_name"]))
+    return selected[: limit or job.get("max_candidate_shops", 50)]
 
 
 def audit_rows(job, target, rows):
@@ -62,27 +79,51 @@ def main():
     parser.add_argument("--pages", type=int)
     parser.add_argument("--interval", type=int)
     parser.add_argument("--max-shops", type=int)
+    parser.add_argument("--skip-shop", action="append", default=[])
     args = parser.parse_args()
     job_dir = ensure_job_dir(args.job_dir)
     job = load_job(job_dir)
     candidate_data = json.loads((job_dir / "candidates.json").read_text(encoding="utf-8"))
-    candidates = [row for row in candidate_data["candidates"] if row["discovered_target_spu"] >= job["minimum_discovery_spu"]]
-    candidates = candidates[: args.max_shops or job.get("max_candidate_shops", 40)]
+    candidates = select_candidates(job, candidate_data["candidates"], args.max_shops)
     output_path = job_dir / "assortment_audit.json"
+    error_path = job_dir / "audit_errors.json"
+    errors = json.loads(error_path.read_text(encoding="utf-8")) if error_path.exists() else {}
     existing = json.loads(output_path.read_text(encoding="utf-8")) if output_path.exists() else {}
     pages = args.pages or job.get("pages", 2)
     interval = args.interval or job.get("interval_seconds", 20)
     for index, target in enumerate(candidates, 1):
         shop_name = target["shop_name"]
+        if shop_name in args.skip_shop:
+            errors[shop_name] = {"status": "skipped_by_operator", "reason": "explicit --skip-shop after repeated transient browser failure", "target": target}
+            write_json(error_path, errors)
+            print(f"[{index}/{len(candidates)}] skipped {shop_name}", flush=True)
+            continue
         if shop_name in existing:
             print(f"[{index}/{len(candidates)}] cached {shop_name}", flush=True)
             continue
         print(f"[{index}/{len(candidates)}] {target['platform']} / {shop_name}", flush=True)
-        open_search(args.session, shop_name)
-        time.sleep(7)
-        rows = run_o2(args.session, "eval", make_search_script(shop_name, pages))
+        try:
+            open_search(args.session, shop_name)
+            time.sleep(7)
+            rows = run_o2(args.session, "eval", make_search_script(shop_name, pages))
+        except BrowserTransientError as error:
+            message = str(error)
+            errors[shop_name] = {"status": "browser_transient_error", "reason": message, "target": target}
+            write_json(error_path, errors)
+            print(f"  browser_error={message}; recorded and continuing", flush=True)
+            continue
+        except RuntimeError as error:
+            message = str(error)
+            if "TAOBAO_RISK_CONTROL" in message:
+                raise
+            errors[shop_name] = {"status": "browser_error", "reason": message, "target": target}
+            write_json(error_path, errors)
+            print(f"  browser_error={message}; recorded and continuing", flush=True)
+            continue
         existing[shop_name] = audit_rows(job, target, rows)
+        errors.pop(shop_name, None)
         write_json(output_path, existing)
+        write_json(error_path, errors)
         record = existing[shop_name]
         print(f"  target={record['target_spu']}/{record['exact_shop_spu_seen']} share={record['target_share']:.1%} {record['match_grade']}", flush=True)
         if index < len(candidates):
@@ -92,4 +133,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
