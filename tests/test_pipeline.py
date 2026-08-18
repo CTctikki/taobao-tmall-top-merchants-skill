@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from build_workbook import build
+from build_workbook import build, contact_row_height, extract_contacts
 from audit_shops import classify_browser_failure, select_candidates
 from common import BrowserTransientError, classify_item, make_search_script, parse_sales_lower_bound, run_o2
 from create_job import create_job
@@ -20,6 +20,36 @@ from verify_job import verify
 
 
 class PipelineTests(unittest.TestCase):
+    def test_extract_contacts_keeps_all_unique_values(self):
+        contact = {
+            "联系方式信息": {
+                "电话": [
+                    {"电话号码": f"1380000000{index}"}
+                    for index in range(8)
+                ]
+                + [{"电话号码": "13800000000"}],
+                "邮箱": [
+                    {"邮箱": f"contact{index}@example.com"}
+                    for index in range(7)
+                ]
+                + [{"邮箱": "contact0@example.com"}],
+            }
+        }
+
+        phones, emails = extract_contacts(contact)
+
+        self.assertEqual(len(phones.split("；")), 8)
+        self.assertEqual(len(emails.split("；")), 7)
+        self.assertEqual(phones.split("；")[0], "13800000000")
+        self.assertEqual(emails.split("；")[0], "contact0@example.com")
+
+    def test_contact_row_height_expands_for_long_lists(self):
+        phones = "；".join(f"1380000000{index}" for index in range(8))
+        emails = "；".join(f"contact{index}@example.com" for index in range(7))
+
+        self.assertEqual(contact_row_height("", "", 68), 68)
+        self.assertGreaterEqual(contact_row_height(phones, emails, 68), 120)
+
     def test_massage_comb_profile_keeps_taobao_and_electric_products(self):
         with tempfile.TemporaryDirectory() as directory:
             job = create_job("按摩梳", directory)
@@ -159,6 +189,11 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertIn("MTOP_REQUEST_TIMEOUT", text)
         self.assertIn("查看商家公示信息", text)
         self.assertIn("liangzhao.htm", text)
+        self.assertIn("FN_API_KEY", text)
+        self.assertIn("biz_fuzzy_search", text)
+        self.assertIn("biz_basic_info", text)
+        self.assertIn("联系方式不能单独证明店铺主体", text)
+        self.assertIn("selected: false", text)
         self.assertNotIn("Bearer MX", text)
 
 

@@ -22,11 +22,11 @@
 
 ## company_candidates.json
 
-企业MCP实体识别原始候选。多候选保持原样，禁止覆盖成单一主体。
+企业MCP或风鸟实体识别原始候选。多候选保持原样，禁止覆盖成单一主体。
 
 ## subjects.json
 
-由Agent基于证据确认的完整公司名映射：店铺名、公司名、主体角色、置信度、证据URL和备注。
+由Agent基于证据确认的完整公司名映射：店铺名、公司名、主体角色、置信度、证据URL和备注。只有证据闭环的候选可设为 `selected: true`；仅有联系方式或仍存在多个主体时保持 `selected: false`。
 
 ## trademark_queries.json / company_trademarks.json
 
@@ -34,7 +34,7 @@
 
 ## company_enrichment.json
 
-确认主体的工商登记与联系方式原始返回。缺失值保持空白。
+确认主体的工商登记与联系方式原始返回。每个候选保留 `selected`、`evidence`、`registration` 和 `contact`；数据来源写入 `evidence` 或单独的 `source` 字段。缺失值保持空白；电话和邮箱全部去重保留，不做条数截断。
 
 ## 工作簿
 

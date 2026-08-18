@@ -28,10 +28,10 @@ $taobao-tmall-top-merchants 按摩梳
 - Python 3.11+
 - `openpyxl`、`requests`
 - `o2` 与 `webcli` Browser Bridge
-- 至少一个企业查询 MCP（企查查/爱企查/天眼查等）
+- 至少一个企业数据源：企查查/爱企查/天眼查 MCP，或风鸟企业查询 Skill（私有额度可选临时环境变量 `FN_API_KEY`）
 - 已登录淘宝的 Chrome 会话
 
-密钥只通过环境变量或本机 Codex 配置提供，禁止提交到 Git。
+密钥只通过环境变量或本机 Codex 配置提供，禁止提交到 Git。风鸟查询先用 `biz_fuzzy_search` 消歧，再用 `biz_basic_info` 补工商字段；仅有联系方式时不得自动确认主体。
 
 ## 目录
 
@@ -43,4 +43,3 @@ $taobao-tmall-top-merchants 按摩梳
 ## 合规
 
 仅采集用户浏览器中可访问的公开页面和公开企业信息；遵守平台条款、访问频率限制和验证码流程，不绕过风控。
-

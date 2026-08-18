@@ -31,6 +31,18 @@ def detect_mcp(config_path):
     return sorted(matches)
 
 
+def detect_fengniao(skill_dir=None):
+    path = Path(skill_dir or Path.home() / ".openclaw/skills/company-search-fengniao")
+    installed = (path / "scripts/tool.mjs").is_file()
+    key_configured = bool(os.environ.get("FN_API_KEY"))
+    return {
+        "installed": installed,
+        "key_configured": key_configured,
+        "ready": installed,
+        "path": str(path),
+    }
+
+
 def run(command):
     completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
@@ -85,31 +97,35 @@ def main():
     parser.add_argument("--config", default=str(Path.home() / ".codex/config.toml"))
     parser.add_argument("--check-taobao", action="store_true")
     parser.add_argument("--session", default="top_merchants_preflight")
+    parser.add_argument("--fengniao-skill-dir")
     parser.add_argument("--install-missing", action="store_true")
     args = parser.parse_args()
     config_path = Path(args.config)
     mcps = detect_mcp(config_path)
+    fengniao = detect_fengniao(args.fengniao_skill_dir)
     doctor = webcli_doctor()
     actions = []
     if not doctor.get("ok") and args.install_missing:
         ok, detail = install_webcli()
         actions.append({"action": "install_webcli", "ok": ok, "detail": detail})
         doctor = webcli_doctor()
-    if not mcps and args.install_missing:
+    if not mcps and not fengniao["ready"] and args.install_missing:
         ok, detail = install_qcc()
         actions.append({"action": "configure_qcc", "ok": ok, "detail": detail})
         mcps = detect_mcp(config_path)
     taobao = taobao_state(args.session) if args.check_taobao and doctor.get("ok") else None
+    enterprise_ready = bool(mcps) or fengniao["ready"]
     result = {
-        "ok": bool(mcps) and bool(doctor.get("ok")) and (taobao is None or bool(taobao.get("loggedIn"))),
+        "ok": enterprise_ready and bool(doctor.get("ok")) and (taobao is None or bool(taobao.get("loggedIn"))),
         "enterprise_mcps": mcps,
+        "fengniao": fengniao,
         "webcli": doctor,
         "taobao": taobao,
         "actions": actions,
         "next": [],
     }
-    if not mcps:
-        result["next"].append("Configure an enterprise-query MCP; QCC setup: https://agent.qcc.com/")
+    if not enterprise_ready:
+        result["next"].append("Configure an enterprise-query MCP or install the Fengniao skill; FN_API_KEY is optional for private quota")
     if not doctor.get("ok"):
         result["next"].append("Install/repair o2 webcli and Browser Bridge")
     if taobao and not taobao.get("loggedIn"):
@@ -120,4 +136,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

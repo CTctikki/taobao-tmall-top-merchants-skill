@@ -30,7 +30,13 @@ def extract_contacts(contact):
     info = contact.get("联系方式信息", {}) if isinstance(contact, dict) else {}
     phones = [item.get("电话号码", "") for item in info.get("电话", []) if item.get("电话号码")]
     emails = [item.get("邮箱", "") for item in info.get("邮箱", []) if item.get("邮箱")]
-    return "；".join(dict.fromkeys(phones[:5])), "；".join(dict.fromkeys(emails[:4]))
+    return "；".join(dict.fromkeys(phones)), "；".join(dict.fromkeys(emails))
+
+
+def contact_row_height(phones, emails, minimum):
+    phone_lines = len(phones.split("；")) if phones else 0
+    email_lines = len(emails.split("；")) if emails else 0
+    return max(minimum, 16 * max(phone_lines, email_lines) + 8)
 
 
 def sales_summary(audit):
@@ -198,6 +204,8 @@ def add_formal(workbook, job, rows):
         sheet.append([index, job["category"], f'{row["platform"]}｜{row["shop_type"]}', row["shop_name"], row["target_spu"], row["exact_shop_spu_seen"], f"=IFERROR(E{excel_row}/F{excel_row},0)", f'=IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["high_match_share"]}),"高匹配",IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["min_share"]}),"达标","不达标"))', row["payment_lower_bound"], row["sales_item_count"], row["store_url"], row["shop_id"], row["seller_id"], row["subject_role"], row["subject_confidence"], row["company"], row["legal_person"], row["phone"], row["email"], row["address"], row["established"], row["credit_code"], row["status"], row["evidence"], row["pending"]])
         sheet.cell(excel_row, 7).number_format = "0.0%"
     style_table(sheet, 3, [7, 12, 24, 25, 11, 13, 11, 11, 16, 16, 40, 14, 16, 20, 28, 30, 12, 26, 28, 44, 13, 24, 20, 42, 38], 68)
+    for row_number, row in enumerate(rows, 4):
+        sheet.row_dimensions[row_number].height = contact_row_height(row["phone"], row["email"], 68)
     if rows:
         sheet.conditional_formatting.add(f"G4:G{sheet.max_row}", CellIsRule(operator="greaterThanOrEqual", formula=[str(job["high_match_share"])], fill=PatternFill("solid", fgColor=GREEN)))
         sheet.conditional_formatting.add(f"G4:G{sheet.max_row}", CellIsRule(operator="between", formula=[str(job["min_share"]), str(job["high_match_share"] - 0.000001)], fill=PatternFill("solid", fgColor=YELLOW)))
@@ -209,7 +217,7 @@ def add_formal(workbook, job, rows):
 def add_subjects(workbook, job_dir, formal):
     sheet = workbook.create_sheet("主体核验")
     headers = ["店铺名", "平台", "候选类型", "公司/主体", "状态", "成立日期", "统一社会信用代码", "法人", "电话", "邮箱", "关联证据", "核验结论"]
-    style_title(sheet, "主体核验｜企业候选与工商补全", "企查查/爱企查/天眼查等模糊检索返回多候选时不自动选择第一名；正式采用项仍需店铺资质页确认。", len(headers))
+    style_title(sheet, "主体核验｜企业候选与工商补全", "企查查/爱企查/天眼查/风鸟等多源检索返回多候选时不自动选择第一名；正式采用项仍需店铺资质页确认。", len(headers))
     sheet.append(headers)
     platform = {row["shop_name"]: row["platform"] for row in formal}
     candidates = load_optional(job_dir / "company_candidates.json", {})
@@ -224,6 +232,12 @@ def add_subjects(workbook, job_dir, formal):
             phone, email = extract_contacts(record.get("contact", {}))
             sheet.append([shop, platform.get(shop, ""), "已查工商候选", registration.get("企业名称") or record.get("company", ""), registration.get("登记状态", ""), registration.get("成立日期", ""), registration.get("统一社会信用代码", ""), registration.get("法定代表人", ""), phone, email, record.get("evidence", ""), "正式表暂采用；仍待资质页确认" if record.get("selected") in {True, "是", "yes"} else "候选主体"])
     style_table(sheet, 3, [26, 10, 20, 32, 18, 13, 24, 12, 26, 28, 42, 34], 58)
+    for row_number in range(4, sheet.max_row + 1):
+        sheet.row_dimensions[row_number].height = contact_row_height(
+            sheet.cell(row_number, 9).value,
+            sheet.cell(row_number, 10).value,
+            58,
+        )
 
 
 def add_missing(workbook, formal, missing, audit_failures):
