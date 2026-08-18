@@ -20,7 +20,7 @@ description: 为指定商品类目自动生成淘宝/天猫top商家清单与招
 5. 运行 `scripts/mine_taobao.py` 发现淘宝与天猫候选店铺。默认每个查询2页、间隔20秒，禁止并发轰炸。
 6. 运行 `scripts/audit_shops.py` 按精确店铺名反查商品结构并执行30%门槛。候选采用分层召回：高发现SPU直接审计；低露出但覆盖多个查询词或店名含类目经营信号的淘宝/C店也进入审计，避免平台排序偏差漏店。
 7. 运行 `scripts/audit_storefronts.py` 取得正式店铺链接、`shopId`、`sellerId` 和店铺类型。天猫店优先在店铺头部悬停“查看资质”，打开“查看商家公示信息”对应的 `liangzhao.htm` 链接确认持证主体；若该资质页触发滑块或 `_____tmd__`，记录“主体未确认”并等待人工验证，不得用企业搜索第一名代替。
-8. 运行 `scripts/enrich_companies.py discover` 获取企业候选；多候选禁止自动选第一名。MCP 信息不足时，用风鸟目录中的 `node scripts/tool.mjs discover "企业基本信息"` 发现工具，执行 `node scripts/tool.mjs call biz_fuzzy_search --params '{"key":"企业或品牌中文名"}'` 获取内部 `entid`，再执行 `node scripts/tool.mjs call biz_basic_info --params '{"entid":"内部ID"}'`。`entid` 只用于内部查询，不写入交付表。需要商标交叉验证时创建 `trademark_queries.json`，运行 `scripts/crosscheck_trademarks.py`，仅将品牌词和相关国际分类同时命中的结果作为证据。结合店铺资质页、商标权利人、品牌官网或同品类生产证据生成 `subjects.json`，再运行 `enrich` 补工商与联系方式。
+8. 企业查询先运行 `scripts/company_source_routing.py` 生成动态计划。只有店铺名/品牌名时采用“风鸟模糊发现 → 企查查精确核验 → 风鸟补缺”；已有公司全称或统一社会信用代码时采用“企查查精确核验 → 风鸟补缺”。只有一个数据源可用时允许降级执行，但必须标记待跨源复核。风鸟调用顺序为 `node scripts/tool.mjs discover "企业基本信息"`、`biz_fuzzy_search` 获取内部 `entid`、`biz_basic_info` 查询详情；`entid` 不写入交付表。企查查与风鸟冲突时按“平台资质页 > 信用代码一致 > 商标/品牌官网 > 企业名称相似 > 电话邮箱”裁决，不能按先返回的平台强选。需要商标交叉验证时创建 `trademark_queries.json`，运行 `scripts/crosscheck_trademarks.py`。结合证据生成 `subjects.json`，再运行 `enrich` 补工商与联系方式。
 9. 运行 `scripts/build_workbook.py` 生成六张表：概览、正式招商商家、主体核验、未确认字段、淘汰商家、口径与复用。`audit_errors.json` 中的风控、超时和显式跳过店铺必须写入“未确认字段”及概览的“未完成审计”，不得混入淘汰商家或静默遗漏。
 10. 运行 `scripts/verify_job.py`，并使用电子表格工具完成公式重算和所有工作表视觉检查后交付。
 
@@ -31,6 +31,7 @@ description: 为指定商品类目自动生成淘宝/天猫top商家清单与招
 - 店铺SPU按唯一商品ID计数；目标占比=`目标SPU/精确店铺SPU`。
 - 付款人数使用搜索卡片可见值的展示下限合计，不宣称近30天月销。
 - 企业简称/品牌名先走实体识别；完整公司名或统一社会信用代码才能查询工商详情。
+- 动态路由按输入精度决定，不固定某个平台永远优先；平台资质页主体已明确时直接进入精确主体路线。
 - 企业查询返回多候选时必须保留候选并标记待确认，不得猜测或自动取第一条。
 - 联系方式不能单独证明店铺主体；仅有电话/邮箱时，候选必须保持 `selected: false`。
 - 店铺资质页确认的当前持证运营主体优先级最高。商标权利人或品牌证据只能提升置信度；若尚未确认当前运营主体，角色必须写明“商标权利主体”，并保留待确认项。

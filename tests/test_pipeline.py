@@ -194,6 +194,9 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertIn("biz_basic_info", text)
         self.assertIn("联系方式不能单独证明店铺主体", text)
         self.assertIn("selected: false", text)
+        self.assertIn("风鸟模糊发现 → 企查查精确核验 → 风鸟补缺", text)
+        self.assertIn("企查查精确核验 → 风鸟补缺", text)
+        self.assertIn("平台资质页 > 信用代码一致 > 商标/品牌官网 > 企业名称相似 > 电话邮箱", text)
         self.assertNotIn("Bearer MX", text)
 
 

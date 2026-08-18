@@ -10,6 +10,7 @@
 - 占比 ≥ 50% 标记为高匹配
 - 多企业候选不自动选第一名
 - 未披露数据留空，不编造
+- 企业查询动态路由：模糊店铺/品牌先风鸟，精确公司全称/信用代码先企查查，再用另一平台核验或补缺
 
 ## 安装
 
@@ -31,7 +32,7 @@ $taobao-tmall-top-merchants 按摩梳
 - 至少一个企业数据源：企查查/爱企查/天眼查 MCP，或风鸟企业查询 Skill（私有额度可选临时环境变量 `FN_API_KEY`）
 - 已登录淘宝的 Chrome 会话
 
-密钥只通过环境变量或本机 Codex 配置提供，禁止提交到 Git。风鸟查询先用 `biz_fuzzy_search` 消歧，再用 `biz_basic_info` 补工商字段；仅有联系方式时不得自动确认主体。
+密钥只通过环境变量或本机 Codex 配置提供，禁止提交到 Git。可先运行 `python scripts/company_source_routing.py --brand-or-shop <店铺或品牌>` 或 `--company-name <公司全称>` 获取动态查询顺序；仅有联系方式时不得自动确认主体。
 
 ## 目录
 
