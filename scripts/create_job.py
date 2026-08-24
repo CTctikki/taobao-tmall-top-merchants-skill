@@ -68,7 +68,10 @@ def create_job(category, job_dir, queries=None, exclude_electric=None):
         "minimum_discovery_spu": 3,
         "secondary_discovery_spu": 1,
         "secondary_query_coverage": 4,
-        "max_candidate_shops": 50,
+        "minimum_payment_lower_bound": 10000,
+        "minimum_quality_query_coverage": 3,
+        "excluded_shop_patterns": ["阿里健康大药房|天猫超市|苏宁易购|百亿补贴品牌优选"],
+        "max_candidate_shops": 30,
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     write_json(ensure_job_dir(job_dir) / "job.json", job)

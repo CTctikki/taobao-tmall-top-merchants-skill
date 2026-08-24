@@ -48,7 +48,55 @@ def sales_summary(audit):
 def selected_company(enrichment, shop):
     candidates = enrichment.get(shop, [])
     selected = next((row for row in candidates if row.get("selected") in {True, "是", "yes"}), None)
-    return selected or (candidates[0] if len(candidates) == 1 else None) or {}
+    return selected or {}
+
+
+def candidate_outreach(enrichment, shop):
+    candidates = enrichment.get(shop, [])
+    company_lines = []
+    phone_lines = []
+    email_lines = []
+    address_lines = []
+    for index, candidate in enumerate(candidates, 1):
+        registration = candidate.get("registration", {}) if isinstance(candidate.get("registration"), dict) else {}
+        if registration.get("error"):
+            registration = {}
+        company = registration.get("企业名称") or candidate.get("company", "")
+        if not company:
+            continue
+        selected = candidate.get("selected") in {True, "是", "yes"}
+        role = candidate.get("role") or candidate.get("subject_role") or "候选企业"
+        company_lines.append(f'{index}. {company}（{role}{"，已有品牌/主体证据" if selected else "，待核验店铺关系"}）')
+        phones, emails = extract_contacts(candidate.get("contact", {}))
+        if phones:
+            phone_lines.append(f"{company}：{phones}")
+        if emails:
+            email_lines.append(f"{company}：{emails}")
+        address = registration.get("注册地址", "")
+        if address:
+            address_lines.append(f"{company}：{address}")
+    if not company_lines:
+        note = "未取得公开企业候选联系方式；优先使用店铺客服/旺旺建联并索取营业执照主体。"
+    elif len(company_lines) == 1:
+        note = "仅有1个企业候选，但不等于当前店铺主体；联系时先核验店铺名称、营业执照和授权关系。"
+    else:
+        note = f"存在{len(company_lines)}个企业候选；电话、邮箱和地址仅用于初步建联，联系时先核验与店铺的关系，不能按第一名认定主体。"
+    return {
+        "candidate_companies": "\n".join(company_lines),
+        "candidate_phones": "\n".join(phone_lines),
+        "candidate_emails": "\n".join(email_lines),
+        "candidate_addresses": "\n".join(address_lines),
+        "outreach_note": note,
+    }
+
+
+def outreach_row_height(row, minimum=68):
+    values = [row.get("candidate_companies", ""), row.get("candidate_phones", ""), row.get("candidate_emails", ""), row.get("candidate_addresses", "")]
+    estimated_lines = []
+    for value in values:
+        lines = str(value or "").splitlines()
+        estimated_lines.append(sum(max(1, (len(line) + 39) // 40) for line in lines) if lines else 0)
+    return max(minimum, contact_row_height(row.get("candidate_phones", ""), row.get("candidate_emails", ""), minimum), 16 * max(estimated_lines, default=0) + 8)
 
 
 def prepare_audit_failures(job_dir, job):
@@ -58,12 +106,14 @@ def prepare_audit_failures(job_dir, job):
         "browser_transient_error": "Browser Bridge/MTop瞬时超时",
         "browser_error": "浏览器错误",
         "skipped_by_operator": "持续异常后显式跳过",
+        "search_no_exact_shop_items": "搜索反查未命中精确店铺商品（审计未完成）",
     }
     actions = {
         "risk_control": "用户完成淘宝滑块/验证码后从断点续跑",
         "browser_transient_error": "恢复Bridge后换新会话低频补跑；出现风控立即停止",
         "browser_error": "先运行webcli doctor诊断，再按错误类型补跑",
         "skipped_by_operator": "恢复后移除--skip-shop并定向补跑",
+        "search_no_exact_shop_items": "仅在用户再次验证后低频定向补查；当前不判为淘汰",
     }
     failures = []
     for shop_name, record in errors.items():
@@ -74,7 +124,7 @@ def prepare_audit_failures(job_dir, job):
         if first_line and first_line not in reason:
             reason = f"{reason}；{first_line}"
         failures.append({
-            "category": job["category"],
+            "category": target.get("category") or job["category"],
             "platform": target.get("platform", ""),
             "shop_name": shop_name,
             "company": "",
@@ -107,6 +157,7 @@ def prepare_rows(job_dir):
         if not isinstance(registration, dict) or registration.get("error"):
             registration = {}
         phone, email = extract_contacts(company_record.get("contact", {})) if company_record else ("", "")
+        outreach = candidate_outreach(enrichment, record["shop_name"])
         payment, sales_count = sales_summary(record)
         company = registration.get("企业名称") or company_record.get("company", "")
         formal.append({
@@ -115,6 +166,7 @@ def prepare_rows(job_dir):
             "store_url": store.get("official_url") or record.get("shop_url", ""),
             "shop_id": store.get("shop_id", ""),
             "seller_id": store.get("seller_id", ""),
+            **outreach,
             "payment_lower_bound": payment,
             "sales_item_count": sales_count,
             "company": company,
@@ -125,10 +177,10 @@ def prepare_rows(job_dir):
             "established": registration.get("成立日期", ""),
             "credit_code": registration.get("统一社会信用代码", ""),
             "status": registration.get("登记状态", ""),
-            "subject_role": company_record.get("role", "") if company_record else "",
-            "subject_confidence": company_record.get("confidence", "未确认") if company_record else "未确认",
+            "subject_role": (company_record.get("role") or company_record.get("subject_role", "")) if company_record else "",
+            "subject_confidence": (company_record.get("confidence") or company_record.get("subject_confidence") or "未确认") if company_record else "未确认",
             "evidence": company_record.get("evidence", "") if company_record else "",
-            "pending": "人工打开店铺资质页确认当前持证主体" if company else "主体待店铺资质页确认；多候选未自动选择",
+            "pending": (company_record.get("pending") or "人工打开店铺资质页确认当前持证主体") if company else "主体待店铺资质页确认；多候选未自动选择",
         })
     formal.sort(key=lambda row: (0 if row["match_grade"] == "高匹配" else 1, -row["payment_lower_bound"], row["shop_name"]))
     rejected.sort(key=lambda row: (-row.get("target_spu", 0), row["shop_name"]))
@@ -137,7 +189,7 @@ def prepare_rows(job_dir):
     for row in formal:
         absent = [label for label, key in fields if not row.get(key)]
         if absent:
-            missing.append({"category": job["category"], "platform": row["platform"], "shop_name": row["shop_name"], "company": row["company"], "missing_fields": "、".join(absent), "reason": "主体未唯一确认" if not row["company"] else "公开渠道未披露或本次MCP未返回", "next_step": row["pending"], "store_url": row["store_url"]})
+            missing.append({"category": row.get("category") or job["category"], "platform": row["platform"], "shop_name": row["shop_name"], "company": row["company"], "missing_fields": "、".join(absent), "reason": "主体未唯一确认" if not row["company"] else "公开渠道未披露或本次MCP未返回", "next_step": row["pending"], "store_url": row["store_url"]})
     return job, formal, rejected, missing, prepare_audit_failures(job_dir, job)
 
 
@@ -196,22 +248,23 @@ def add_overview(workbook, job, formal, rejected, missing, audit_failures):
 
 def add_formal(workbook, job, rows):
     sheet = workbook.create_sheet("正式招商商家")
-    headers = ["序号", "类目", "平台/店铺类型", "店铺名", "目标SPU", "精确店铺SPU", "相关占比", "匹配等级", "付款人数展示下限", "有销量展示商品数", "店铺链接", "shopId", "sellerId", "主体角色", "主体置信度", "公司名称", "法人", "公司电话", "邮箱", "注册地址", "成立日期", "统一社会信用代码", "登记状态", "数据来源/证据", "待确认项"]
-    style_title(sheet, f'{job["category"]}｜正式招商商家｜淘宝 + 天猫', f'保留规则：目标SPU≥{job["min_spu"]}、相关占比≥{job["min_share"]:.0%}。公司字段尽量补齐，但持证运营主体仍需平台资质页终审。', len(headers))
+    headers = ["序号", "类目", "平台/店铺类型", "店铺名", "目标SPU", "精确店铺SPU", "相关占比", "匹配等级", "付款人数展示下限", "有销量展示商品数", "店铺链接", "shopId", "sellerId", "候选公司（待核验）", "候选电话（待核验）", "候选邮箱（待核验）", "候选地址（待核验）", "建联提示", "主体角色", "主体置信度", "公司名称", "法人", "公司电话", "邮箱", "注册地址", "成立日期", "统一社会信用代码", "登记状态", "数据来源/证据", "待确认项"]
+    style_title(sheet, f'{job["category"]}｜正式招商商家｜淘宝 + 天猫', f'保留规则：目标SPU≥{job["min_spu"]}、相关占比≥{job["min_share"]:.0%}。候选电话/邮箱/地址可用于初步建联，但联系时必须先核验与店铺关系；已确认主体字段仍以资质证据为准。', len(headers))
     sheet.append(headers)
     for index, row in enumerate(rows, 1):
         excel_row = sheet.max_row + 1
-        sheet.append([index, job["category"], f'{row["platform"]}｜{row["shop_type"]}', row["shop_name"], row["target_spu"], row["exact_shop_spu_seen"], f"=IFERROR(E{excel_row}/F{excel_row},0)", f'=IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["high_match_share"]}),"高匹配",IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["min_share"]}),"达标","不达标"))', row["payment_lower_bound"], row["sales_item_count"], row["store_url"], row["shop_id"], row["seller_id"], row["subject_role"], row["subject_confidence"], row["company"], row["legal_person"], row["phone"], row["email"], row["address"], row["established"], row["credit_code"], row["status"], row["evidence"], row["pending"]])
+        sheet.append([index, row.get("category") or job["category"], f'{row["platform"]}｜{row["shop_type"]}', row["shop_name"], row["target_spu"], row["exact_shop_spu_seen"], f"=IFERROR(E{excel_row}/F{excel_row},0)", f'=IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["high_match_share"]}),"高匹配",IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["min_share"]}),"达标","不达标"))', row["payment_lower_bound"], row["sales_item_count"], row["store_url"], row["shop_id"], row["seller_id"], row["candidate_companies"], row["candidate_phones"], row["candidate_emails"], row["candidate_addresses"], row["outreach_note"], row["subject_role"], row["subject_confidence"], row["company"], row["legal_person"], row["phone"], row["email"], row["address"], row["established"], row["credit_code"], row["status"], row["evidence"], row["pending"]])
         sheet.cell(excel_row, 7).number_format = "0.0%"
-    style_table(sheet, 3, [7, 12, 24, 25, 11, 13, 11, 11, 16, 16, 40, 14, 16, 20, 28, 30, 12, 26, 28, 44, 13, 24, 20, 42, 38], 68)
+    style_table(sheet, 3, [7, 12, 24, 25, 11, 13, 11, 11, 16, 16, 40, 14, 16, 42, 48, 48, 56, 42, 20, 28, 30, 12, 26, 28, 44, 13, 24, 20, 42, 38], 68)
     for row_number, row in enumerate(rows, 4):
-        sheet.row_dimensions[row_number].height = contact_row_height(row["phone"], row["email"], 68)
+        sheet.row_dimensions[row_number].height = max(contact_row_height(row["phone"], row["email"], 68), outreach_row_height(row))
     if rows:
         sheet.conditional_formatting.add(f"G4:G{sheet.max_row}", CellIsRule(operator="greaterThanOrEqual", formula=[str(job["high_match_share"])], fill=PatternFill("solid", fgColor=GREEN)))
         sheet.conditional_formatting.add(f"G4:G{sheet.max_row}", CellIsRule(operator="between", formula=[str(job["min_share"]), str(job["high_match_share"] - 0.000001)], fill=PatternFill("solid", fgColor=YELLOW)))
         for row_number in range(4, sheet.max_row + 1):
-            if not sheet.cell(row_number, 16).value:
-                sheet.cell(row_number, 16).fill = PatternFill("solid", fgColor=RED)
+            confirmed_company_column = headers.index("公司名称") + 1
+            if not sheet.cell(row_number, confirmed_company_column).value:
+                sheet.cell(row_number, confirmed_company_column).fill = PatternFill("solid", fgColor=RED)
 
 
 def add_subjects(workbook, job_dir, formal):
@@ -270,7 +323,7 @@ def add_rejected(workbook, job, rows):
     style_title(sheet, "淘汰商家｜低于门槛", "淘汰仅依据本轮商品结构；淘宝/C店不会因店铺类型被淘汰。", len(headers))
     sheet.append(headers)
     for row in rows:
-        sheet.append([job["category"], row["platform"], row["shop_name"], row["target_spu"], row["exact_shop_spu_seen"], row["target_share"], row["electric_spu"], row["accessory_spu"], row["unrelated_spu"], row["reason"], row["store_url"], row.get("captured_at", "")])
+        sheet.append([row.get("category") or job["category"], row["platform"], row["shop_name"], row["target_spu"], row["exact_shop_spu_seen"], row["target_share"], row["electric_spu"], row["accessory_spu"], row["unrelated_spu"], row["reason"], row["store_url"], row.get("captured_at", "")])
         sheet.cell(sheet.max_row, 6).number_format = "0.0%"
     style_table(sheet, 3, [12, 10, 26, 11, 13, 12, 11, 11, 11, 28, 42, 24], 48)
 

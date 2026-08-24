@@ -4,23 +4,42 @@ import re
 import time
 from datetime import datetime
 
-from common import BrowserTransientError, classify_item, clean_title, ensure_job_dir, load_job, make_search_script, normalize, open_search, platform_name, run_o2, write_json
+from common import BrowserTransientError, classify_item, clean_title, ensure_job_dir, load_job, make_search_script, normalize, open_search, parse_sales_lower_bound, platform_name, run_o2, write_json
+
+
+def candidate_payment_lower_bound(row):
+    return sum(parse_sales_lower_bound(item.get("sales")) or 0 for item in row.get("items", []))
 
 
 def select_candidates(job, rows, limit=None):
     selected = []
     hint_patterns = [pattern for pattern in job.get("merchant_hint_patterns", []) if pattern]
     hints = re.compile("|".join(f"(?:{pattern})" for pattern in hint_patterns), re.I) if hint_patterns else None
+    excluded_patterns = [pattern for pattern in job.get("excluded_shop_patterns", []) if pattern]
+    excluded = re.compile("|".join(f"(?:{pattern})" for pattern in excluded_patterns), re.I) if excluded_patterns else None
+    minimum_payment = job.get("minimum_payment_lower_bound", 0)
+    minimum_quality_coverage = job.get("minimum_quality_query_coverage", 1)
+    sales_top_n_mode = job.get("sales_top_n_mode", False)
     for row in rows:
         discovery = row.get("discovered_target_spu", 0)
         coverage = len(row.get("queries", []))
         primary = discovery >= job.get("minimum_discovery_spu", 3)
         broad_recall = discovery >= job.get("secondary_discovery_spu", 1) and coverage >= job.get("secondary_query_coverage", 4)
         merchant_hint = discovery >= job.get("secondary_discovery_spu", 1) and bool(hints and hints.search(row.get("shop_name", "")))
-        if primary or broad_recall or merchant_hint:
-            selected.append({**row, "audit_reason": "primary" if primary else "query_coverage" if broad_recall else "merchant_hint"})
-    selected.sort(key=lambda row: (0 if row["audit_reason"] == "primary" else 1, -row.get("discovered_target_spu", 0), -len(row.get("queries", [])), row["shop_name"]))
-    return selected[: limit or job.get("max_candidate_shops", 50)]
+        sales_top = sales_top_n_mode and discovery >= job.get("secondary_discovery_spu", 1)
+        if not (primary or broad_recall or merchant_hint or sales_top):
+            continue
+        audit_reason = "sales_top" if sales_top_n_mode else "primary" if primary else "query_coverage" if broad_recall else "merchant_hint"
+        payment_lower_bound = candidate_payment_lower_bound(row)
+        if payment_lower_bound < minimum_payment:
+            continue
+        if coverage < minimum_quality_coverage and audit_reason not in {"merchant_hint", "sales_top"}:
+            continue
+        if excluded and excluded.search(row.get("shop_name", "")):
+            continue
+        selected.append({**row, "audit_reason": audit_reason, "payment_lower_bound": payment_lower_bound, "query_coverage": coverage})
+    selected.sort(key=lambda row: (-row["payment_lower_bound"], -row.get("discovered_target_spu", 0), -row["query_coverage"], row["shop_name"]))
+    return selected[: limit or job.get("max_candidate_shops", 30)]
 
 
 def audit_rows(job, target, rows):
@@ -81,6 +100,10 @@ def classify_browser_failure(message):
     return "browser_error"
 
 
+def should_reuse_recorded_failure(errors, shop_name):
+    return errors.get(shop_name, {}).get("status") == "risk_control"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-dir", required=True)
@@ -109,6 +132,9 @@ def main():
             continue
         if shop_name in existing:
             print(f"[{index}/{len(candidates)}] cached {shop_name}", flush=True)
+            continue
+        if should_reuse_recorded_failure(errors, shop_name):
+            print(f"[{index}/{len(candidates)}] cached risk_control {shop_name}", flush=True)
             continue
         print(f"[{index}/{len(candidates)}] {target['platform']} / {shop_name}", flush=True)
         try:
