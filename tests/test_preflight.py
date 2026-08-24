@@ -8,6 +8,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import preflight
 from preflight import detect_fengniao, detect_mcp
 
 
@@ -47,6 +48,45 @@ class PreflightTests(unittest.TestCase):
             self.assertFalse(result["key_configured"])
             self.assertTrue(result["ready"])
 
+    def test_python_runtime_requires_311_or_newer(self):
+        self.assertFalse(preflight.python_runtime_status((3, 10, 9))["ok"])
+        self.assertTrue(preflight.python_runtime_status((3, 11, 0))["ok"])
+
+    def test_python_packages_report_missing_dependencies(self):
+        def fake_find_spec(name):
+            return object() if name == "requests" else None
+
+        with patch("preflight.importlib.util.find_spec", side_effect=fake_find_spec):
+            result = preflight.python_packages_status()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["missing"], ["openpyxl"])
+
+    @patch("preflight.run", return_value=(0, "installed", ""))
+    def test_o2_install_uses_internal_package_index(self, run):
+        ok, detail = preflight.install_o2()
+
+        self.assertTrue(ok)
+        self.assertEqual(detail, "installed")
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-U",
+                "--index-url",
+                "https://artifactory.jd.com/artifactory/api/pypi/libs-py-local/simple",
+                "o2",
+            ],
+        )
+
+    def test_bootstrap_script_installs_python_then_runs_preflight(self):
+        script = (ROOT / "scripts" / "bootstrap.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Python.Python.3.11", script)
+        self.assertIn("--install-missing", script)
 
 if __name__ == "__main__":
     unittest.main()

@@ -402,6 +402,8 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertIn("企查查精确核验 → 风鸟补缺", text)
         self.assertIn("平台资质页 > 信用代码一致 > 商标/品牌官网 > 企业名称相似 > 电话邮箱", text)
         self.assertNotIn("Bearer MX", text)
+        self.assertIn("scripts/bootstrap.ps1", text)
+        self.assertIn("--install-missing", text)
 
 
 if __name__ == "__main__":

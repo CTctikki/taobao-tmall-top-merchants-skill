@@ -2,7 +2,7 @@
 
 ## 1. 预检
 
-`preflight.py` 检查：企业查询MCP、风鸟 Skill（私有额度可选 `FN_API_KEY`）、o2/webcli、Browser Bridge、淘宝登录。缺少工具时先安装工具；缺少账号/API Key时只提示用户完成授权，不伪造凭证。
+先运行 `powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1`。该脚本先检测 Python 3.11+，缺失或过旧时使用 `winget` 为当前用户静默安装；随后调用 `preflight.py --install-missing --check-taobao` 检查并自动安装 `openpyxl`、`requests`、`o2`、`webcli` Browser Bridge。最后检查企业查询MCP、风鸟 Skill（私有额度可选 `FN_API_KEY`）和淘宝登录。账号授权、API Key、验证码或安装失败只提示用户处理，不伪造凭证、不绕过风控。
 
 ## 2. 类目建模
 

@@ -13,7 +13,7 @@ description: 为指定商品类目自动生成淘宝/天猫top商家清单与招
 
 ## 执行顺序
 
-1. 运行 `scripts/preflight.py --check-taobao`。
+1. 先运行 `powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1`。脚本自动检测 Python 3.11+；缺失或版本过低时通过 `winget` 为当前用户静默安装 Python 3.11，然后由 `scripts/preflight.py --install-missing --check-taobao` 自动安装 `openpyxl`、`requests`、`o2` 和 `webcli` Browser Bridge，并检查淘宝登录。自动安装失败时停止并给出明确修复提示，不得跳过环境检查。
 2. 企业数据源可使用企查查/爱企查/天眼查 MCP，或 `~/.openclaw/skills/company-search-fengniao` 下的风鸟 Skill。缺少 API Key 时提示用户在提供商官网开通，只从当前进程环境变量读取，绝不写入仓库、日志或结果文件。详见 `references/mcp-setup.md`。
 3. 若淘宝未登录或出现验证码/滑块，打开淘宝并请用户完成登录；保持同一浏览器会话，恢复时复用缓存，禁止从头高频重跑。
 4. 运行 `scripts/create_job.py <类目>`。检查生成的查询词、目标词和排除词；只在明显歧义时向用户确认商品边界。

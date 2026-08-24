@@ -26,13 +26,26 @@ git clone https://github.com/CTctikki/taobao-tmall-top-merchants-skill.git
 $taobao-tmall-top-merchants 按摩梳
 ```
 
+首次运行会自动执行环境检查；也可以手动运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1
+```
+
 ## 依赖
 
-- Python 3.11+
-- `openpyxl`、`requests`
-- `o2` 与 `webcli` Browser Bridge
-- 至少一个企业数据源：企查查/爱企查/天眼查 MCP，或风鸟企业查询 Skill（私有额度可选临时环境变量 `FN_API_KEY`）
+- Windows PowerShell 与 `winget`（仅在需要自动安装 Python 时使用）
 - 已登录淘宝的 Chrome 会话
+- 至少一个企业数据源：企查查/爱企查/天眼查 MCP，或风鸟企业查询 Skill
+
+`bootstrap.ps1` 会自动检测并尽量静默安装以下运行环境：
+
+- Python 3.11 或更高版本；
+- `openpyxl`、`requests`；
+- `o2`；
+- `webcli` Browser Bridge。
+
+风鸟私有额度可选使用临时环境变量 `FN_API_KEY`。企业账号授权、淘宝登录和验证码仍需用户本人完成，脚本不会绕过登录或风控。
 
 密钥只通过环境变量或本机 Codex 配置提供，禁止提交到 Git。可先运行 `python scripts/company_source_routing.py --brand-or-shop <店铺或品牌>` 或 `--company-name <公司全称>` 获取动态查询顺序；仅有联系方式时不得自动确认主体。
 
