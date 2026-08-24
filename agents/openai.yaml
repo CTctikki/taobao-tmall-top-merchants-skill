@@ -1,9 +1,8 @@
 interface:
   display_name: "淘宝/天猫top商家清单"
-  short_description: "自动采集淘宝天猫TOP店铺并补齐工商招商信息"
+  short_description: "发现TOP店铺或整理用户指定商家名单与工商建联信息"
   brand_color: "#1F4E78"
-  default_prompt: "Use $taobao-tmall-top-merchants to generate a verified Taobao/Tmall top-merchant recruitment workbook for a confirmed category."
+  default_prompt: "Use $taobao-tmall-top-merchants to discover top merchants for a category or turn my supplied shop names and links into a verified recruitment workbook."
 
 policy:
   allow_implicit_invocation: true
-

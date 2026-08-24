@@ -1,6 +1,13 @@
 # 淘宝/天猫top商家清单
 
-一个可复用的 Codex Skill：用户只需给出商品类目，Agent 会检查淘宝登录和企业查询 MCP，低频采集淘宝/天猫店铺，按店铺商品结构筛选 TOP 商家，并补齐工商与联系方式，最后生成可招商的 Excel 工作簿。
+一个可复用的 Codex Skill，支持两种模式：用户只给商品类目时，Agent 低频发现并审计淘宝/天猫优质商家；用户直接给店铺名、多个链接、文本、表格、电子表格或混合名单时，Agent 不重新采集淘宝，直接整理建联对象、企业候选与联系方式，生成最终招商工作簿。
+
+## 使用模式
+
+- **类目发现模式**：执行候选发现、店铺SPU结构审计和默认Top30优质短名单规则。
+- **用户指定名单模式**：用户给出的店铺全部进入正式招商表，不需要固定Excel模板或专用导入脚本；Codex自行提取、去重并保留原始输入。
+
+名单模式不填写或推断SPU、店内占比、付款人数展示下限和Top30结论。工作簿会明确说明该名单由用户指定，不代表已通过主营准入审计。
 
 ## 默认口径
 
@@ -26,16 +33,24 @@ git clone https://github.com/CTctikki/taobao-tmall-top-merchants-skill.git
 $taobao-tmall-top-merchants 按摩梳
 ```
 
+也可以直接粘贴店铺名称或多个店铺链接，或附上任意结构的名单文件并要求整理最终招商表。
+
 首次运行会自动执行环境检查；也可以手动运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1
 ```
 
+整理用户指定名单时跳过淘宝检查：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1 -SkipTaobaoCheck
+```
+
 ## 依赖
 
 - Windows PowerShell 与 `winget`（仅在需要自动安装 Python 时使用）
-- 已登录淘宝的 Chrome 会话
+- 已登录淘宝的 Chrome 会话（仅类目发现模式需要）
 - 至少一个企业数据源：企查查/爱企查/天眼查 MCP，或风鸟企业查询 Skill
 
 `bootstrap.ps1` 会自动检测并尽量静默安装以下运行环境：

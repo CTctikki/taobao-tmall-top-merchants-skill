@@ -405,6 +405,18 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertIn("scripts/bootstrap.ps1", text)
         self.assertIn("--install-missing", text)
 
+    def test_skill_supports_user_provided_shop_list_mode(self):
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("用户指定名单模式", text)
+        for input_type in ["店铺名", "多个链接", "文本", "表格", "电子表格", "混合信息"]:
+            self.assertIn(input_type, text)
+        self.assertIn("不运行 `mine_taobao.py`、`audit_shops.py`", text)
+        self.assertIn("全部进入正式招商商家", text)
+        self.assertIn("不得补造目标SPU、店内目标商品占比、付款人数展示下限或Top30结论", text)
+        self.assertIn("用户指定名单，不代表Top30或主营准入达标", text)
+        self.assertIn("名单模式跳过第3至第7步", text)
+        self.assertIn("不运行 `create_job.py`、`mine_taobao.py`、`audit_shops.py`、`audit_storefronts.py`", text)
+
 
 if __name__ == "__main__":
     unittest.main()
