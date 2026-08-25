@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -45,13 +46,76 @@ def sales_summary(audit):
     return sum(values), len(values)
 
 
+def has_confirmed_identity_evidence(candidate):
+    if candidate.get("selected") not in {True, "是", "yes"}:
+        return False
+    if candidate.get("evidence_type") != "credit_code_match":
+        return False
+    registration = candidate.get("registration", {}) if isinstance(candidate.get("registration"), dict) else {}
+    company = registration.get("企业名称") or candidate.get("company", "")
+    credit_code = re.sub(r"\s+", "", str(registration.get("统一社会信用代码") or candidate.get("credit_code", ""))).upper()
+    matched_credit_code = re.sub(r"\s+", "", str(candidate.get("matched_credit_code", ""))).upper()
+    evidence = candidate.get("evidence") or candidate.get("source_url", "")
+    return bool(company and credit_code and matched_credit_code == credit_code and evidence)
+
+
 def selected_company(enrichment, shop):
+    return next((row for row in enrichment.get(shop, []) if has_confirmed_identity_evidence(row)), {})
+
+
+def normalize_legal_identity(value):
+    return re.sub(r"[\s（）()·•,，。]", "", str(value or "")).lower()
+
+
+def candidate_identity(candidate):
+    registration = candidate.get("registration", {}) if isinstance(candidate.get("registration"), dict) else {}
+    return (
+        registration.get("企业名称") or candidate.get("company", ""),
+        re.sub(r"\s+", "", str(registration.get("统一社会信用代码") or candidate.get("credit_code", ""))).upper(),
+    )
+
+
+def qualification_matches(candidate, qualification):
+    company, credit_code = candidate_identity(candidate)
+    qualification_company = qualification.get("company_name", "")
+    qualification_code = re.sub(r"\s+", "", str(qualification.get("credit_code", ""))).upper()
+    if qualification_code and credit_code:
+        return qualification_code == credit_code
+    return bool(qualification_company and normalize_legal_identity(company) == normalize_legal_identity(qualification_company))
+
+
+def qualification_subject(qualification, matched_candidate=None):
+    registration = dict((matched_candidate or {}).get("registration", {}))
+    qualification_registration = {
+        "企业名称": qualification.get("company_name", ""),
+        "统一社会信用代码": qualification.get("credit_code", ""),
+        "法定代表人": qualification.get("legal_person", ""),
+        "注册地址": qualification.get("address", ""),
+        "成立日期": qualification.get("established", ""),
+    }
+    registration.update({key: value for key, value in qualification_registration.items() if value})
+    return {
+        **(matched_candidate or {}),
+        "company": qualification.get("company_name", ""),
+        "selected": True,
+        "evidence_type": "platform_qualification",
+        "subject_role": "平台营业执照持证经营主体",
+        "subject_confidence": "已由平台营业执照确认",
+        "evidence": qualification.get("source_url", ""),
+        "registration": registration,
+    }
+
+
+def resolve_confirmed_subject(enrichment, shop, qualification=None):
+    qualification = qualification or {}
     candidates = enrichment.get(shop, [])
-    selected = next((row for row in candidates if row.get("selected") in {True, "是", "yes"}), None)
-    return selected or {}
+    if qualification.get("status") == "verified" and qualification.get("company_name") and qualification.get("credit_code"):
+        matched = next((candidate for candidate in candidates if qualification_matches(candidate, qualification)), None)
+        return qualification_subject(qualification, matched)
+    return selected_company(enrichment, shop)
 
 
-def candidate_outreach(enrichment, shop):
+def candidate_outreach(enrichment, shop, qualification=None):
     candidates = enrichment.get(shop, [])
     company_lines = []
     phone_lines = []
@@ -64,9 +128,12 @@ def candidate_outreach(enrichment, shop):
         company = registration.get("企业名称") or candidate.get("company", "")
         if not company:
             continue
-        selected = candidate.get("selected") in {True, "是", "yes"}
         role = candidate.get("role") or candidate.get("subject_role") or "候选企业"
-        company_lines.append(f'{index}. {company}（{role}{"，已有品牌/主体证据" if selected else "，待核验店铺关系"}）')
+        if qualification and qualification.get("status") == "verified":
+            relationship = "与平台营业执照一致" if qualification_matches(candidate, qualification) else "与平台营业执照不一致，仅供建联线索"
+        else:
+            relationship = "有闭环证据" if has_confirmed_identity_evidence(candidate) else "待核验店铺关系，不是已确认主体"
+        company_lines.append(f"{index}. {company}（{role}，{relationship}）")
         phones, emails = extract_contacts(candidate.get("contact", {}))
         if phones:
             phone_lines.append(f"{company}：{phones}")
@@ -77,6 +144,8 @@ def candidate_outreach(enrichment, shop):
             address_lines.append(f"{company}：{address}")
     if not company_lines:
         note = "未取得公开企业候选联系方式；优先使用店铺客服/旺旺建联并索取营业执照主体。"
+    elif qualification and qualification.get("status") == "verified":
+        note = f'平台营业执照主体为“{qualification.get("company_name", "")}”；其他公司仅作建联线索，不得写入已确认主体。'
     elif len(company_lines) == 1:
         note = "仅有1个企业候选，但不等于当前店铺主体；联系时先核验店铺名称、营业执照和授权关系。"
     else:
@@ -140,10 +209,12 @@ def prepare_rows(job_dir):
     job = load_job(job_dir)
     audit = load_optional(job_dir / "assortment_audit.json", {})
     storefronts = load_optional(job_dir / "storefronts.json", {})
+    qualifications = load_optional(job_dir / "platform_qualifications.json", {})
     enrichment = load_optional(job_dir / "company_enrichment.json", {})
     formal, rejected = [], []
     for record in audit.values():
         store = storefronts.get(record["shop_name"], {})
+        qualification = qualifications.get(record["shop_name"], {}) or store.get("platform_qualification", {})
         if not record.get("passes_minimum"):
             reasons = []
             if record.get("target_spu", 0) < job["min_spu"]:
@@ -152,20 +223,30 @@ def prepare_rows(job_dir):
                 reasons.append(f'目标占比<{job["min_share"]:.0%}')
             rejected.append({**record, "reason": "；".join(reasons), "store_url": store.get("official_url") or record.get("shop_url", "")})
             continue
-        company_record = selected_company(enrichment, record["shop_name"])
+        company_record = resolve_confirmed_subject(enrichment, record["shop_name"], qualification)
         registration = company_record.get("registration", {}) if isinstance(company_record, dict) else {}
         if not isinstance(registration, dict) or registration.get("error"):
             registration = {}
         phone, email = extract_contacts(company_record.get("contact", {})) if company_record else ("", "")
-        outreach = candidate_outreach(enrichment, record["shop_name"])
+        outreach = candidate_outreach(enrichment, record["shop_name"], qualification)
         payment, sales_count = sales_summary(record)
         company = registration.get("企业名称") or company_record.get("company", "")
+        mismatched_candidates = [candidate for candidate in enrichment.get(record["shop_name"], []) if qualification.get("status") == "verified" and not qualification_matches(candidate, qualification)]
+        subject_consistency = "平台营业执照已确认" if qualification.get("status") == "verified" else ("强证据已确认" if company else "未确认")
+        pending = company_record.get("pending", "") if company_record else ""
+        if mismatched_candidates:
+            pending = "企业搜索候选与平台营业执照不一致，已禁止写入正式主体；联系方式如需使用，必须先核验授权或关联关系。"
+        elif not company:
+            pending = "主体待店铺资质页确认；企业搜索结果只能作为待核验建联候选"
         formal.append({
             **record,
             "shop_type": store.get("shop_type") or ("天猫店" if record["platform"] == "天猫" else "淘宝店（企业/个人待核验）"),
             "store_url": store.get("official_url") or record.get("shop_url", ""),
             "shop_id": store.get("shop_id", ""),
             "seller_id": store.get("seller_id", ""),
+            "license_company": qualification.get("company_name", ""),
+            "license_credit_code": qualification.get("credit_code", ""),
+            "subject_consistency": subject_consistency,
             **outreach,
             "payment_lower_bound": payment,
             "sales_item_count": sales_count,
@@ -180,7 +261,7 @@ def prepare_rows(job_dir):
             "subject_role": (company_record.get("role") or company_record.get("subject_role", "")) if company_record else "",
             "subject_confidence": (company_record.get("confidence") or company_record.get("subject_confidence") or "未确认") if company_record else "未确认",
             "evidence": company_record.get("evidence", "") if company_record else "",
-            "pending": (company_record.get("pending") or "人工打开店铺资质页确认当前持证主体") if company else "主体待店铺资质页确认；多候选未自动选择",
+            "pending": pending,
         })
     formal.sort(key=lambda row: (0 if row["match_grade"] == "高匹配" else 1, -row["payment_lower_bound"], row["shop_name"]))
     rejected.sort(key=lambda row: (-row.get("target_spu", 0), row["shop_name"]))
@@ -248,14 +329,14 @@ def add_overview(workbook, job, formal, rejected, missing, audit_failures):
 
 def add_formal(workbook, job, rows):
     sheet = workbook.create_sheet("正式招商商家")
-    headers = ["序号", "类目", "平台/店铺类型", "店铺名", "目标SPU", "精确店铺SPU", "相关占比", "匹配等级", "付款人数展示下限", "有销量展示商品数", "店铺链接", "shopId", "sellerId", "候选公司（待核验）", "候选电话（待核验）", "候选邮箱（待核验）", "候选地址（待核验）", "建联提示", "主体角色", "主体置信度", "公司名称", "法人", "公司电话", "邮箱", "注册地址", "成立日期", "统一社会信用代码", "登记状态", "数据来源/证据", "待确认项"]
+    headers = ["序号", "类目", "平台/店铺类型", "店铺名", "目标SPU", "精确店铺SPU", "相关占比", "匹配等级", "付款人数展示下限", "有销量展示商品数", "店铺链接", "shopId", "sellerId", "建联候选公司（非店铺主体，待核验）", "候选电话（待核验）", "候选邮箱（待核验）", "候选地址（待核验）", "建联提示", "平台营业执照公司名称", "平台营业执照信用代码", "主体一致性", "主体角色", "主体置信度", "公司名称", "法人", "公司电话", "邮箱", "注册地址", "成立日期", "统一社会信用代码", "登记状态", "数据来源/证据", "待确认项"]
     style_title(sheet, f'{job["category"]}｜正式招商商家｜淘宝 + 天猫', f'保留规则：目标SPU≥{job["min_spu"]}、相关占比≥{job["min_share"]:.0%}。候选电话/邮箱/地址可用于初步建联，但联系时必须先核验与店铺关系；已确认主体字段仍以资质证据为准。', len(headers))
     sheet.append(headers)
     for index, row in enumerate(rows, 1):
         excel_row = sheet.max_row + 1
-        sheet.append([index, row.get("category") or job["category"], f'{row["platform"]}｜{row["shop_type"]}', row["shop_name"], row["target_spu"], row["exact_shop_spu_seen"], f"=IFERROR(E{excel_row}/F{excel_row},0)", f'=IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["high_match_share"]}),"高匹配",IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["min_share"]}),"达标","不达标"))', row["payment_lower_bound"], row["sales_item_count"], row["store_url"], row["shop_id"], row["seller_id"], row["candidate_companies"], row["candidate_phones"], row["candidate_emails"], row["candidate_addresses"], row["outreach_note"], row["subject_role"], row["subject_confidence"], row["company"], row["legal_person"], row["phone"], row["email"], row["address"], row["established"], row["credit_code"], row["status"], row["evidence"], row["pending"]])
+        sheet.append([index, row.get("category") or job["category"], f'{row["platform"]}｜{row["shop_type"]}', row["shop_name"], row["target_spu"], row["exact_shop_spu_seen"], f"=IFERROR(E{excel_row}/F{excel_row},0)", f'=IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["high_match_share"]}),"高匹配",IF(AND(E{excel_row}>={job["min_spu"]},G{excel_row}>={job["min_share"]}),"达标","不达标"))', row["payment_lower_bound"], row["sales_item_count"], row["store_url"], row["shop_id"], row["seller_id"], row["candidate_companies"], row["candidate_phones"], row["candidate_emails"], row["candidate_addresses"], row["outreach_note"], row["license_company"], row["license_credit_code"], row["subject_consistency"], row["subject_role"], row["subject_confidence"], row["company"], row["legal_person"], row["phone"], row["email"], row["address"], row["established"], row["credit_code"], row["status"], row["evidence"], row["pending"]])
         sheet.cell(excel_row, 7).number_format = "0.0%"
-    style_table(sheet, 3, [7, 12, 24, 25, 11, 13, 11, 11, 16, 16, 40, 14, 16, 42, 48, 48, 56, 42, 20, 28, 30, 12, 26, 28, 44, 13, 24, 20, 42, 38], 68)
+    style_table(sheet, 3, [7, 12, 24, 25, 11, 13, 11, 11, 16, 16, 40, 14, 16, 48, 48, 48, 56, 42, 34, 24, 22, 24, 28, 34, 12, 26, 28, 44, 13, 24, 20, 42, 44], 68)
     for row_number, row in enumerate(rows, 4):
         sheet.row_dimensions[row_number].height = max(contact_row_height(row["phone"], row["email"], 68), outreach_row_height(row))
     if rows:
@@ -275,6 +356,24 @@ def add_subjects(workbook, job_dir, formal):
     platform = {row["shop_name"]: row["platform"] for row in formal}
     candidates = load_optional(job_dir / "company_candidates.json", {})
     enrichment = load_optional(job_dir / "company_enrichment.json", {})
+    qualifications = load_optional(job_dir / "platform_qualifications.json", {})
+    for shop, qualification in qualifications.items():
+        if qualification.get("status") != "verified":
+            continue
+        sheet.append([
+            shop,
+            platform.get(shop, ""),
+            "平台营业执照主体",
+            qualification.get("company_name", ""),
+            "",
+            qualification.get("established", ""),
+            qualification.get("credit_code", ""),
+            qualification.get("legal_person", ""),
+            "",
+            "",
+            qualification.get("source_url", ""),
+            "已确认当前持证经营主体",
+        ])
     for shop, record in candidates.items():
         for company in record.get("result", {}).get("企业信息", [])[:8]:
             legal = company.get("法定代表人名称", [])
@@ -283,7 +382,14 @@ def add_subjects(workbook, job_dir, formal):
         for record in records:
             registration = record.get("registration", {}) if isinstance(record.get("registration"), dict) else {}
             phone, email = extract_contacts(record.get("contact", {}))
-            sheet.append([shop, platform.get(shop, ""), "已查工商候选", registration.get("企业名称") or record.get("company", ""), registration.get("登记状态", ""), registration.get("成立日期", ""), registration.get("统一社会信用代码", ""), registration.get("法定代表人", ""), phone, email, record.get("evidence", ""), "正式表暂采用；仍待资质页确认" if record.get("selected") in {True, "是", "yes"} else "候选主体"])
+            qualification = qualifications.get(shop, {})
+            if qualification.get("status") == "verified":
+                conclusion = "与平台营业执照一致" if qualification_matches(record, qualification) else "与平台营业执照不一致，仅作建联候选"
+            elif has_confirmed_identity_evidence(record):
+                conclusion = "强证据已闭环"
+            else:
+                conclusion = "候选主体，未确认店铺关系"
+            sheet.append([shop, platform.get(shop, ""), "已查工商候选", registration.get("企业名称") or record.get("company", ""), registration.get("登记状态", ""), registration.get("成立日期", ""), registration.get("统一社会信用代码", ""), registration.get("法定代表人", ""), phone, email, record.get("evidence", ""), conclusion])
     style_table(sheet, 3, [26, 10, 20, 32, 18, 13, 24, 12, 26, 28, 42, 34], 58)
     for row_number in range(4, sheet.max_row + 1):
         sheet.row_dimensions[row_number].height = contact_row_height(

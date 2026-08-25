@@ -12,6 +12,10 @@ from common import load_job
 SECRET_PATTERN = re.compile(r"Bearer\s+[A-Za-z0-9._-]{12,}|Authorization\s*[=:]", re.I)
 
 
+def normalize_identity(value):
+    return re.sub(r"[\s（）()·•,，。]", "", str(value or "")).lower()
+
+
 def verify(job_dir, workbook_path=None):
     job_dir = Path(job_dir).resolve()
     job = load_job(job_dir)
@@ -35,6 +39,24 @@ def verify(job_dir, workbook_path=None):
                 if isinstance(cell.value, str) and cell.value in {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A"}:
                     errors.append((sheet.title, cell.coordinate, cell.value))
     assert not errors, errors
+    qualifications_path = job_dir / "platform_qualifications.json"
+    if qualifications_path.exists():
+        qualifications = json.loads(qualifications_path.read_text(encoding="utf-8"))
+        formal_sheet = value_book["正式招商商家"]
+        headers = {cell.value: cell.column for cell in formal_sheet[3]}
+        required_subject_columns = {"店铺名", "公司名称", "统一社会信用代码", "主体一致性"}
+        assert required_subject_columns.issubset(headers), "正式招商商家缺少平台主体核验列"
+        rows = {formal_sheet.cell(row, headers["店铺名"]).value: row for row in range(4, formal_sheet.max_row + 1)}
+        for shop, qualification in qualifications.items():
+            if qualification.get("status") != "verified" or shop not in rows:
+                continue
+            assert qualification.get("company_name") and qualification.get("credit_code"), f"{shop}: verified平台资质缺少公司名或信用代码"
+            row = rows[shop]
+            actual_company = formal_sheet.cell(row, headers["公司名称"]).value
+            actual_code = formal_sheet.cell(row, headers["统一社会信用代码"]).value
+            assert normalize_identity(actual_company) == normalize_identity(qualification.get("company_name")), f"{shop}: 正式主体与平台营业执照不一致"
+            assert str(actual_code or "").strip().upper() == str(qualification.get("credit_code") or "").strip().upper(), f"{shop}: 信用代码与平台营业执照不一致"
+            assert formal_sheet.cell(row, headers["主体一致性"]).value == "平台营业执照已确认", f"{shop}: 主体一致性状态错误"
     for path in job_dir.rglob("*"):
         if path.is_file() and path.suffix.lower() in {".json", ".txt", ".log", ".md", ".py"}:
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -52,4 +74,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

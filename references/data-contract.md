@@ -36,13 +36,19 @@
 
 店铺正式URL、`shop_id`、`seller_id`、`shop_type`、页面信号、采集时间。
 
+## platform_qualifications.json
+
+按店铺保存淘宝/天猫平台营业执照原文提取结果。至少包含：`status`、`evidence_type: platform_qualification`、`company_name`、`credit_code`、`legal_person`、`address`、`established`、`source_url`。`status: verified` 要求公司名与信用代码同时存在；截图或页面不完整时写 `incomplete`，遇验证码、滑块或 `_____tmd__` 写 `risk_control`。
+
+该文件是正式主体的最高优先级锚点。存在 `verified` 记录时，正式表 `company` 和 `credit_code` 必须与其一致；企业搜索、商标或品牌官网返回的其他公司只能作为“建联候选公司（非店铺主体，待核验）”。
+
 ## company_candidates.json
 
 企业MCP或风鸟实体识别原始候选。多候选保持原样，禁止覆盖成单一主体。
 
 ## subjects.json
 
-由Agent基于证据确认的完整公司名映射：店铺名、公司名、主体角色、置信度、证据URL和备注。只有证据闭环的候选可设为 `selected: true`；仅有联系方式或仍存在多个主体时保持 `selected: false`。
+由Agent基于证据确认的完整公司名映射：店铺名、公司名、`evidence_type`、主体角色、置信度、证据URL和备注。平台资质不得通过本文件中的标签声明，必须来自独立的 `platform_qualifications.json`。信用代码闭环记录必须使用 `evidence_type: credit_code_match`，并同时保存工商侧统一社会信用代码、来源侧 `matched_credit_code` 和证据来源；代码逐字一致才可设为 `selected: true`。商标/品牌官网、企业名称相似、联系方式或仍存在多个主体时保持 `selected: false`。
 
 ## trademark_queries.json / company_trademarks.json
 
@@ -54,7 +60,7 @@
 
 ## 工作簿
 
-正式表字段至少包括：类目、平台/店铺类型、店铺名、目标SPU、精确店铺SPU、相关占比、匹配等级、付款展示下限、店铺链接、shopId/sellerId、候选公司/电话/邮箱/地址（待核验）、建联提示、已确认公司名称、法人、电话、邮箱、注册地址、成立日期、信用代码、主体角色/置信度、来源和待确认项。候选建联字段不得被解释为已确认店铺主体。
+正式表字段至少包括：类目、平台/店铺类型、店铺名、目标SPU、精确店铺SPU、相关占比、匹配等级、付款展示下限、店铺链接、shopId/sellerId、平台营业执照公司名称/信用代码、主体一致性、建联候选公司（非店铺主体，待核验）/电话/邮箱/地址、建联提示、已确认公司名称、法人、电话、邮箱、注册地址、成立日期、信用代码、主体角色/置信度、来源和待确认项。候选建联字段不得被解释为已确认店铺主体。
 
 用户指定名单模式的正式表不要求目标SPU、精确店铺SPU、相关占比、匹配等级和付款展示字段；若保留这些列，必须留空并说明未执行商品结构审计。名单模式至少保留：类目/分组、平台、店铺名、店铺链接、负责人、来源、候选公司/法人/电话/邮箱/地址/成立日期/信用代码/登记状态（均标记待核验）、已确认主体字段、证据、建联提示和待确认项。
 
