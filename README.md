@@ -47,22 +47,40 @@ powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1
 powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1 -SkipTaobaoCheck
 ```
 
+## 首次使用
+
+正式任务必须同时拥有企查查 Key 和风鸟 Key：
+
+- 企查查：<https://agent.qcc.com/profile/api-key>
+- 风鸟：<https://www.riskbird.com/center/apiKey>
+
+把两个 Key 一起发给 Codex 即可，不要自行配置环境变量。Codex 会通过 `scripts/configure_enterprise_keys.py` 的标准输入安全配置，不把 Key 放进命令参数、仓库、日志或工作簿；后续风鸟调用通过 `scripts/run_fengniao.py` 自动读取用户级配置，无需重启。任一 Key 缺失或验证失败时，任务会停止。
+
+如果提示 Browser Bridge 未连接，按以下步骤操作：
+
+1. 在 Chrome 地址栏打开 `chrome://extensions`。
+2. 开启右上角“开发者模式”。
+3. 点击“加载已解压的扩展程序”，选择 `~/.webcli/extension`。
+4. 将 Browser Bridge 固定到工具栏，并保持 Chrome 开启。
+5. 重新运行 `bootstrap.ps1`，直到连接检查通过。
+
 ## 依赖
 
 - Windows PowerShell 与 `winget`（仅在需要自动安装 Python 时使用）
 - 已登录淘宝的 Chrome 会话（仅类目发现模式需要）
-- 至少一个企业数据源：企查查/爱企查/天眼查 MCP，或风鸟企业查询 Skill
+- 已验证的 `qcc-company` MCP 与风鸟企业查询 Skill，两者缺一不可
 
 `bootstrap.ps1` 会自动检测并尽量静默安装以下运行环境：
 
 - Python 3.11 或更高版本；
 - `openpyxl`、`requests`；
 - `o2`；
-- `webcli` Browser Bridge。
+- `webcli` Browser Bridge；
+- `qcc-company` MCP 与风鸟企业查询 Skill。
 
-风鸟私有额度可选使用临时环境变量 `FN_API_KEY`。企业账号授权、淘宝登录和验证码仍需用户本人完成，脚本不会绕过登录或风控。
+风鸟公共额度不能替代用户自己的 Key。企业账号开通、淘宝登录和验证码仍需用户本人完成，脚本不会绕过登录或风控。
 
-密钥只通过环境变量或本机 Codex 配置提供，禁止提交到 Git。可先运行 `python scripts/company_source_routing.py --brand-or-shop <店铺或品牌>` 或 `--company-name <公司全称>` 获取动态查询顺序；仅有联系方式时不得自动确认主体。
+密钥只由 Codex 通过标准输入交给配置助手，禁止写入命令参数或提交到 Git。可先运行 `python scripts/company_source_routing.py --brand-or-shop <店铺或品牌>` 或 `--company-name <公司全称>` 获取动态查询顺序；仅有联系方式时不得自动确认主体。
 
 ## 目录
 

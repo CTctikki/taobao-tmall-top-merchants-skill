@@ -417,6 +417,24 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertIn("名单模式跳过第3至第7步", text)
         self.assertIn("不运行 `create_job.py`、`mine_taobao.py`、`audit_shops.py`、`audit_storefronts.py`", text)
 
+    def test_skill_requires_both_private_keys_and_guides_browser_bridge_setup(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        setup = (ROOT / "references" / "mcp-setup.md").read_text(encoding="utf-8")
+        combined = "\n".join([skill, readme, setup])
+
+        self.assertIn("https://agent.qcc.com/profile/api-key", combined)
+        self.assertIn("https://www.riskbird.com/center/apiKey", combined)
+        self.assertIn("必须同时提供", skill)
+        self.assertIn("缺一不可", skill)
+        self.assertIn("公共额度不能替代", skill)
+        self.assertIn("configure_enterprise_keys.py", skill)
+        self.assertIn("run_fengniao.py", skill)
+        self.assertIn("标准输入", skill)
+        self.assertIn("不要让用户自行配置环境变量", skill)
+        for instruction in ["chrome://extensions", "开发者模式", "加载已解压的扩展程序", ".webcli/extension", "固定", "保持 Chrome 开启"]:
+            self.assertIn(instruction, combined)
+
 
 if __name__ == "__main__":
     unittest.main()

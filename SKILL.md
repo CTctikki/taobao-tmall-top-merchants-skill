@@ -20,18 +20,26 @@ Codex应从原始信息中尽量归一化：类目、店铺名、平台、店铺
 
 默认准入：目标SPU `>=10`、店内目标商品占比 `>=30%`；`>=50%` 标记“高匹配”。淘宝店/C店和天猫店使用同一门槛，店铺类型不是淘汰条件。
 
+## 首次使用硬门槛
+
+- 正式任务必须同时提供并验证成功 **企查查 Key + 风鸟 Key**，缺一不可；风鸟公共额度不能替代用户自己的 Key，爱企查、天眼查或其他企业 MCP 也不能替代指定的 `qcc-company`。
+- 缺少任一 Key 时先停止任务，并同时给出企查查 <https://agent.qcc.com/profile/api-key> 与风鸟 <https://www.riskbird.com/center/apiKey>。请用户把两个 Key 一起发给 Codex，不要让用户自行配置环境变量。
+- Codex 收到两个 Key 后不得复述。启动 `python scripts/configure_enterprise_keys.py`，只通过标准输入依次传入企查查 Key 和风鸟 Key，再运行 `bootstrap.ps1`；Key 禁止进入命令参数、日志、工作簿、文档、Git或最终回复。
+- 预检必须实际验证两个服务，不能只看是否安装。任一 Key 无效、额度不足或服务不可用时拒绝继续招商任务。
+- webcli 必须同时满足 `connectivity.ok=true` 且至少一个 profile 的 `extensionConnected=true`。未连接时运行 `webcli extension install` 下载扩展，并用小白步骤引导：在 Chrome 打开 `chrome://extensions` → 开启“开发者模式” → “加载已解压的扩展程序” → 选择 `~/.webcli/extension` → 固定 Browser Bridge → 保持 Chrome 开启。不能因顶层 `ok=true` 就跳过连接检查。
+
 ## 执行顺序
 
 以下第3至第7步仅用于类目发现模式。名单模式跳过第3至第7步，不运行 `create_job.py`、`mine_taobao.py`、`audit_shops.py`、`audit_storefronts.py`；完成输入归一化后直接执行企业候选核验和名单模式工作簿生成。名单模式没有标准采集任务JSON时，不强行运行 `verify_job.py`，但仍必须完成字段检查、公式重算、全表视觉检查和密钥扫描。
 
-1. 先判断模式。类目发现模式运行 `powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1`；用户指定名单模式运行同一脚本并加 `-SkipTaobaoCheck`，只验证工作簿和企业数据源环境，不打开淘宝页面。脚本仍通过 `preflight.py --install-missing` 检查并补齐必要依赖；自动安装失败时停止并给出明确修复提示，不得跳过环境检查。
-2. 企业数据源可使用企查查/爱企查/天眼查 MCP，或 `~/.openclaw/skills/company-search-fengniao` 下的风鸟 Skill。缺少 API Key 时提示用户在提供商官网开通，只从当前进程环境变量读取，绝不写入仓库、日志或结果文件。详见 `references/mcp-setup.md`。
+1. 先判断模式。类目发现模式运行 `powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1`；用户指定名单模式运行同一脚本并加 `-SkipTaobaoCheck`，只验证工作簿和企业数据源环境，不打开淘宝页面。脚本通过 `preflight.py --install-missing` 检查并补齐必要依赖、风鸟 Skill、`qcc-company` 与 webcli 扩展；自动安装失败时停止并给出明确修复提示，不得跳过环境检查。
+2. 只有 `qcc-company` 与风鸟 Skill 均已安装、两个用户私有 Key 均已配置且轻量验证成功，企业环境才算就绪。详见 `references/mcp-setup.md`。
 3. 若淘宝未登录或出现验证码/滑块，打开淘宝并请用户完成登录；保持同一浏览器会话，恢复时复用缓存，禁止从头高频重跑。
 4. 运行 `scripts/create_job.py <类目>`。检查生成的查询词、目标词和排除词；只在明显歧义时向用户确认商品边界。
 5. 运行 `scripts/mine_taobao.py` 发现淘宝与天猫候选店铺。默认每个查询2页、间隔20秒，禁止并发轰炸。原始候选仅作发现证据，不等于后续审计队列。
 6. 运行 `scripts/audit_shops.py` 按精确店铺名反查商品结构并执行30%门槛。默认按目标商品付款人数展示下限、发现目标SPU和查询覆盖排序，过滤低销量与综合渠道店，每类最多审计30家；不足30家不补低质量商家。店名含类目经营信号的低露出淘宝/C店仍可进入分层召回，避免平台排序偏差漏店。若用户明确要求“每类销量Top N”（如Top30），设置 `sales_top_n_mode=true`、`max_candidate_shops=N`、`minimum_payment_lower_bound=0`、`minimum_quality_query_coverage=1`：每个类目只按目标商品付款人数展示下限审计前N家，不把数百家原始发现候选全部送入后续流程；最终仍只保留满足SPU与占比门槛的优质商家。
 7. 运行 `scripts/audit_storefronts.py` 取得正式店铺链接、`shopId`、`sellerId` 和店铺类型。天猫店优先在店铺头部悬停“查看资质”，打开“查看商家公示信息”对应的 `liangzhao.htm` 链接确认持证主体；若该资质页触发滑块或 `_____tmd__`，记录“主体未确认”并等待人工验证，不得用企业搜索第一名代替。
-8. 企业查询先运行 `scripts/company_source_routing.py` 生成动态计划。只有店铺名/品牌名时采用“风鸟模糊发现 → 企查查精确核验 → 风鸟补缺”；已有公司全称或统一社会信用代码时采用“企查查精确核验 → 风鸟补缺”。只有一个数据源可用时允许降级执行，但必须标记待跨源复核。风鸟调用顺序为 `node scripts/tool.mjs discover "企业基本信息"`、`biz_fuzzy_search` 获取内部 `entid`、`biz_basic_info` 查询详情；`entid` 不写入交付表。企查查与风鸟冲突时按“平台资质页 > 信用代码一致 > 商标/品牌官网 > 企业名称相似 > 电话邮箱”裁决，不能按先返回的平台强选。需要商标交叉验证时创建 `trademark_queries.json`，运行 `scripts/crosscheck_trademarks.py`。结合证据生成 `subjects.json`，再运行 `enrich` 补工商与联系方式。
+8. 企业查询先运行 `scripts/company_source_routing.py` 生成动态计划。只有店铺名/品牌名时采用“风鸟模糊发现 → 企查查精确核验 → 风鸟补缺”；已有公司全称或统一社会信用代码时采用“企查查精确核验 → 风鸟补缺”。任一数据源不可用时停止，不允许绕过双源门槛。风鸟命令统一通过 `python scripts/run_fengniao.py` 执行，使刚写入的用户级 Key 无需重启即可生效；调用顺序为 `discover "企业基本信息"`、`biz_fuzzy_search` 获取内部 `entid`、`biz_basic_info` 查询详情，`entid` 不写入交付表。企查查与风鸟冲突时按“平台资质页 > 信用代码一致 > 商标/品牌官网 > 企业名称相似 > 电话邮箱”裁决，不能按先返回的平台强选。需要商标交叉验证时创建 `trademark_queries.json`，运行 `scripts/crosscheck_trademarks.py`。结合证据生成 `subjects.json`，再运行 `enrich` 补工商与联系方式。
 9. 类目发现模式运行 `scripts/build_workbook.py` 生成六张表：概览、正式招商商家、主体核验、未确认字段、淘汰商家、口径与复用。用户指定名单模式由Codex按输入实际结构直接生成六类信息：概览、正式招商商家、主体核验、未确认字段、原始输入、口径说明，无需强行套用采集任务JSON。正式表必须直接展示候选公司、候选电话、候选邮箱和候选地址供招商建联，并明确标注“待核验”；这些联系方式不能反向证明店铺主体。
 10. 运行 `scripts/verify_job.py`，并使用电子表格工具完成公式重算和所有工作表视觉检查后交付。
 
@@ -59,7 +67,7 @@ Codex应从原始信息中尽量归一化：类目、店铺名、平台、店铺
 - 只操作用户已登录的浏览器会话；不要导出Cookie。
 - 用户要求无头执行时，企业查询、工作簿生成、重算和导出必须使用 CLI/API 与 `--headless`；不得打开或接管可见浏览器窗口。已有淘宝采集结果时直接复用，不得为补企业字段重新触发浏览器。
 - 启动脚本前把 Skill 根目录和任务目录解析为绝对路径；不要同时叠加仓库前缀与当前工作目录。每一步写入 `work/<job>/` 中间JSON。重跑必须跳过已完成查询和店铺。Browser Bridge 的单次 `operation aborted`、超时或连接重置最多重试1次；页面内 MTop 请求以 `MTOP_REQUEST_TIMEOUT` 有界退出，单店仍失败时写入 `audit_errors.json` 并继续其他店。除正文验证码文案外，还要检测指向 `_____tmd__` 的隐藏挑战 iframe；两者都属于淘宝风控，必须立即停止，不得当作普通超时自动重试。若某个低价值店持续占用会话，可换新会话并用 `--skip-shop` 显式跳过，禁止静默丢失。
-- `FN_API_KEY`、其他 API Key、Bearer Token、Cookie、Authorization 头禁止写入脚本、日志、Git或工作簿；风鸟私有 Key 仅允许通过临时环境变量传入。
+- `FN_API_KEY`、其他 API Key、Bearer Token、Cookie、Authorization 头禁止写入命令参数、脚本、日志、Git、工作簿、手册或最终回复；用户可把双 Key 发给 Codex，由配置助手通过标准输入写入 Windows 当前用户安全配置，Codex 不得在任何回复中复述。
 
 ## 详细资料
 

@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 import re
 import time
 import tomllib
@@ -9,6 +8,7 @@ from pathlib import Path
 import requests
 
 from common import ensure_job_dir, write_json
+from configure_enterprise_keys import QCC_ENV_NAME, normalize_qcc_auth, read_user_environment
 
 
 def load_qcc_server(config_path, server_name="qcc-company"):
@@ -16,7 +16,7 @@ def load_qcc_server(config_path, server_name="qcc-company"):
     server = config.get("mcp_servers", {}).get(server_name)
     if not server:
         raise RuntimeError(f"{server_name} MCP is not configured; run preflight.py")
-    auth = os.environ.get("QCC_AUTH")
+    auth = read_user_environment(QCC_ENV_NAME)
     if not auth:
         auth = server.get("http_headers", {}).get("Authorization", "")
     if not auth:
@@ -27,7 +27,7 @@ def load_qcc_server(config_path, server_name="qcc-company"):
 class QccClient:
     def __init__(self, url, auth):
         self.url = url
-        self.headers = {"Authorization": auth, "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+        self.headers = {"Authorization": normalize_qcc_auth(auth), "Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
         self.request_id = 0
 
     def call(self, name, arguments):

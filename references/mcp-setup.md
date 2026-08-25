@@ -1,28 +1,42 @@
-# 企业查询MCP安装
+# 企业数据源首次配置
 
 ## 检测
 
-读取 `~/.codex/config.toml` 的 `mcp_servers`，名称或URL包含 `qcc`、`企查查`、`aiqicha`、`爱企查`、`tianyancha`、`天眼查` 均视为候选企业查询MCP。另检查 `~/.openclaw/skills/company-search-fengniao/scripts/tool.mjs`；当前进程存在 `FN_API_KEY` 时优先使用私有额度，否则使用官方包的公共额度。运行时以实际工具列表为准。
+正式任务要求以下项目全部通过：
 
-## 企查查示例
+1. `~/.codex/config.toml` 存在准确命名的 `qcc-company`，URL 为官方公司 MCP，并通过 `bearer_token_env_var = "QCC_AUTH"` 取凭证。
+2. `~/.openclaw/skills/company-search-fengniao/scripts/tool.mjs` 已安装。
+3. 企查查 Key 与风鸟 Key 均为用户自己的 Key，且分别通过轻量请求验证。
 
-不要把Token写进命令历史、脚本或Git。将密钥放入环境变量：
+其他企业 MCP 只可作为补充，不能替代 `qcc-company`。风鸟公共额度不能替代私有 Key。任一项缺失、Key 无效、额度不足或服务不可用时拒绝执行招商任务。
+
+## 获取双 Key
+
+- 企查查 Key：<https://agent.qcc.com/profile/api-key>
+- 风鸟 Key：<https://www.riskbird.com/center/apiKey>
+
+必须同时提供两个 Key。让用户把两个 Key 一次发给 Codex，不要让用户自行配置环境变量。Codex 不得复述 Key，也不得把 Key 放入命令参数、日志、工作簿、手册或 Git。
+
+Codex 启动以下助手，再通过标准输入依次传入企查查 Key 与风鸟 Key：
 
 ```powershell
-$env:QCC_AUTH = "Bearer <YOUR_TOKEN>"
+python scripts/configure_enterprise_keys.py
 ```
 
-配置公司信息服务：
+助手会自动兼容用户是否带 `Bearer` 前缀，将两个凭证写入 Windows 当前用户环境，并在 Codex 配置中只保存环境变量名称，不保存 Key 值。随后运行 `bootstrap.ps1` 做真实可用性验证。仓库内企查查脚本会直接读取该用户级配置；风鸟命令统一通过 `scripts/run_fengniao.py` 启动，因此当前 Codex 无需重启。
 
-```powershell
-codex mcp add qcc-company --url https://agent.qcc.com/mcp/company/stream --bearer-token-env-var QCC_AUTH
-```
+## webcli Browser Bridge
 
-开通/充值入口：<https://agent.qcc.com/>。配置后重启Codex，再运行预检。
+预检会尝试运行 `webcli extension install`。若仍未连接，逐条告诉小白用户：
 
-## 其他提供商
+1. 在 Chrome 地址栏输入 `chrome://extensions` 并回车。
+2. 打开页面右上角“开发者模式”。
+3. 点击“加载已解压的扩展程序”。
+4. 选择预检打印的 `~/.webcli/extension` 准确目录。
+5. 将 Browser Bridge 固定到 Chrome 工具栏。
+6. 保持 Chrome 开启，再运行 `bootstrap.ps1`。
 
-若本机已有爱企查、天眼查等MCP，优先使用其实体识别、工商登记和联系方式工具。若没有公开、可验证的安装命令，不要猜测包名或URL；打开提供商官方说明，让用户完成API开通后再配置。
+只有 `connectivity.ok=true` 且至少一个 profile 的 `extensionConnected=true` 才算连接成功；顶层 `ok=true` 不足以通过。
 
 ## 风鸟 Skill
 
@@ -32,12 +46,12 @@ codex mcp add qcc-company --url https://agent.qcc.com/mcp/company/stream --beare
 npx -y openclaw@2026.7.1-2 skills install '@xinshu001/company-search-fengniao' --global --acknowledge-clawhub-risk
 ```
 
-官方包可使用有限公共额度；有私有 Key 时只放在当前进程的 `FN_API_KEY`，不要写入配置文件、命令参数或结果文件。进入风鸟 Skill 目录后按以下顺序调用：
+安装由预检自动完成。风鸟必须使用用户自己的 Key；公共额度不能替代。进入风鸟 Skill 目录后按以下顺序调用：
 
 ```powershell
-node scripts/tool.mjs discover "企业基本信息"
-node scripts/tool.mjs call biz_fuzzy_search --params '{"key":"企业或品牌中文名"}'
-node scripts/tool.mjs call biz_basic_info --params '{"entid":"上一步内部ID"}'
+python scripts/run_fengniao.py discover "企业基本信息"
+python scripts/run_fengniao.py call biz_fuzzy_search --params '{"key":"企业或品牌中文名"}'
+python scripts/run_fengniao.py call biz_basic_info --params '{"entid":"上一步内部ID"}'
 ```
 
 先用 `biz_fuzzy_search` 消歧，再用同一个内部 `entid` 查询基本信息。企业简称或品牌出现多个候选时不得直接取第一条。`entid` 不写入工作簿。

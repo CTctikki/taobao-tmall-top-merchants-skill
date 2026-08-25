@@ -23,7 +23,9 @@
 
 ## 1. 预检
 
-先运行 `powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1`。该脚本先检测 Python 3.11+，缺失或过旧时使用 `winget` 为当前用户静默安装；随后调用 `preflight.py --install-missing --check-taobao` 检查并自动安装 `openpyxl`、`requests`、`o2`、`webcli` Browser Bridge。最后检查企业查询MCP、风鸟 Skill（私有额度可选 `FN_API_KEY`）和淘宝登录。账号授权、API Key、验证码或安装失败只提示用户处理，不伪造凭证、不绕过风控。
+先运行 `powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1`。该脚本检测并补齐 Python 3.11+、`openpyxl`、`requests`、`o2`、`webcli`、`qcc-company` MCP 与风鸟 Skill。企业预检是硬门槛：企查查 Key 与风鸟 Key 必须同时存在并分别通过轻量验证，风鸟公共额度和其他企业 MCP 均不能替代。缺 Key 时同时提供 <https://agent.qcc.com/profile/api-key> 与 <https://www.riskbird.com/center/apiKey>，让用户把两个 Key 发给 Codex；Codex 通过 `configure_enterprise_keys.py` 标准输入自动配置，不让用户自行设置环境变量，也不在回复中复述 Key。
+
+webcli 只有在 `connectivity.ok=true` 且至少一个 profile 的 `extensionConnected=true` 时才通过。未连接时运行 `webcli extension install`，然后引导用户在 Chrome 打开 `chrome://extensions`、开启开发者模式、加载 `~/.webcli/extension`、固定 Browser Bridge 并保持 Chrome 开启。名单模式继续使用 `-SkipTaobaoCheck`，配置企业源时不得打开淘宝页面。
 
 ## 2. 类目建模
 
@@ -59,7 +61,7 @@
 
 - 只有店铺名或品牌名：风鸟模糊发现 → 企查查精确核验 → 风鸟补缺。
 - 已有公司全称或统一社会信用代码：企查查精确核验 → 风鸟补缺。
-- 只有一个数据源：降级使用现有数据源，并标记待跨源复核。
+- 任一数据源或私有 Key 不可用：停止正式任务，修复并验证双源后再继续，不允许单源降级绕过门槛。
 
 风鸟先用 `biz_fuzzy_search` 获取内部 `entid`，再用 `biz_basic_info` 查询。多候选不得自动取第一名，联系方式不能单独确认店铺主体。
 

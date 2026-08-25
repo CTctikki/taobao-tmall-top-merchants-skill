@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipTaobaoCheck
+    [switch]$SkipTaobaoCheck,
+    [switch]$ConfigureEnterpriseKeys
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,6 +55,12 @@ if (-not $python) {
 }
 
 Write-Host "Using Python: $python"
+if ($ConfigureEnterpriseKeys) {
+    & $python (Join-Path $scriptRoot "configure_enterprise_keys.py")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Enterprise credential setup failed. Both QCC and Fengniao keys are required."
+    }
+}
 $arguments = @((Join-Path $scriptRoot "preflight.py"), "--install-missing")
 if (-not $SkipTaobaoCheck) {
     $arguments += "--check-taobao"

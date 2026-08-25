@@ -6,7 +6,19 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import zipfile
 from pathlib import Path
+
+import requests
+
+from configure_enterprise_keys import (
+    FENGNIAO_ENV_NAME,
+    QCC_ENV_NAME,
+    QCC_MCP_URL,
+    ensure_qcc_mcp_config,
+    normalize_qcc_auth,
+    read_user_environment,
+)
 
 
 ENTERPRISE_TERMS = ("qcc", "企查查", "aiqicha", "爱企查", "tianyancha", "天眼查")
@@ -49,14 +61,6 @@ def find_o2():
     return ""
 
 
-def find_codex():
-    direct = shutil.which("codex")
-    if direct:
-        return direct
-    candidates = list((Path.home() / "AppData/Local/OpenAI/Codex/bin").glob("*/codex.exe"))
-    return str(candidates[-1]) if candidates else ""
-
-
 def detect_mcp(config_path):
     if not config_path.exists():
         return []
@@ -69,21 +73,48 @@ def detect_mcp(config_path):
     return sorted(matches)
 
 
+def detect_qcc_mcp(config_path):
+    server = {}
+    if config_path.exists():
+        config = tomllib.loads(config_path.read_text(encoding="utf-8-sig"))
+        server = config.get("mcp_servers", {}).get("qcc-company", {})
+    configured = (
+        server.get("url") == QCC_MCP_URL
+        and server.get("bearer_token_env_var") == QCC_ENV_NAME
+    )
+    return {
+        "configured": configured,
+        "key_configured": bool(read_user_environment(QCC_ENV_NAME)),
+        "url": server.get("url", ""),
+    }
+
+
 def detect_fengniao(skill_dir=None):
     path = Path(skill_dir or Path.home() / ".openclaw/skills/company-search-fengniao")
     installed = (path / "scripts/tool.mjs").is_file()
-    key_configured = bool(os.environ.get("FN_API_KEY"))
+    key_configured = bool(read_user_environment(FENGNIAO_ENV_NAME))
     return {
         "installed": installed,
         "key_configured": key_configured,
-        "ready": installed,
+        "ready": installed and key_configured,
         "path": str(path),
     }
 
 
-def run(command):
-    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+def run(command, env=None):
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+        )
+        return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+    except OSError as error:
+        return 127, "", str(error)
 
 
 def install_python_dependencies(requirements_path=None):
@@ -105,15 +136,51 @@ def install_webcli():
     return code == 0, out or err
 
 
-def install_qcc(config_only=False):
-    codex = find_codex()
-    if not codex:
-        return False, "Codex CLI not found"
-    command = [codex, "mcp", "add", "qcc-company", "--url", "https://agent.qcc.com/mcp/company/stream", "--bearer-token-env-var", "QCC_AUTH"]
-    if not os.environ.get("QCC_AUTH") and not config_only:
-        return False, "Set QCC_AUTH first; get a token at https://agent.qcc.com/"
+def install_webcli_extension(extension_dir=None):
+    o2 = find_o2()
+    if not o2:
+        return False, "o2 not installed"
+    code, out, err = run([o2, "launch", "webcli", "extension", "install"])
+    if code == 0:
+        return True, out or err
+    path = Path(extension_dir or Path.home() / ".webcli/extension").resolve()
+    archive = path.parent / "extension.zip"
+    if not archive.is_file():
+        return False, err or out
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive) as bundle:
+            for member in bundle.infolist():
+                target = (path / member.filename).resolve()
+                if path != target and path not in target.parents:
+                    return False, "extension archive contains an unsafe path"
+            bundle.extractall(path)
+        return True, "extension archive extracted"
+    except (OSError, zipfile.BadZipFile):
+        return False, "extension archive extraction failed"
+
+
+def install_fengniao():
+    command = [
+        "npx",
+        "-y",
+        "openclaw@2026.7.1-2",
+        "skills",
+        "install",
+        "@xinshu001/company-search-fengniao",
+        "--global",
+        "--acknowledge-clawhub-risk",
+    ]
     code, out, err = run(command)
     return code == 0, out or err
+
+
+def install_qcc(config_path):
+    try:
+        ensure_qcc_mcp_config(config_path)
+        return True, "qcc-company MCP configured with QCC_AUTH reference"
+    except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
+        return False, f"QCC MCP configuration failed: {type(error).__name__}"
 
 
 def webcli_doctor():
@@ -127,6 +194,77 @@ def webcli_doctor():
         return json.loads(out)
     except json.JSONDecodeError:
         return {"ok": False, "error": out}
+
+
+def webcli_browser_ready(doctor):
+    return bool(
+        doctor.get("connectivity", {}).get("ok")
+        and any(profile.get("extensionConnected") for profile in doctor.get("profiles", []))
+    )
+
+
+def browser_setup_instructions(extension_dir=None):
+    path = Path(extension_dir or Path.home() / ".webcli/extension").resolve()
+    return [
+        "在 Chrome 地址栏打开 chrome://extensions。",
+        "打开右上角“开发者模式”。",
+        f"点击“加载已解压的扩展程序”，选择此目录：{path}",
+        "把 Browser Bridge 固定到 Chrome 工具栏。",
+        "保持 Chrome 开启，然后重新运行 bootstrap.ps1。",
+    ]
+
+
+def validate_qcc(qcc, auth=None):
+    token = auth or read_user_environment(QCC_ENV_NAME)
+    if not qcc.get("configured") or not token:
+        return {"validated": False, "error": "missing_configuration_or_key"}
+    try:
+        response = requests.post(
+            qcc["url"],
+            headers={
+                "Authorization": normalize_qcc_auth(token),
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            timeout=30,
+        )
+    except requests.RequestException:
+        return {"validated": False, "error": "request_failed"}
+    if response.status_code < 200 or response.status_code >= 300:
+        return {"validated": False, "error": f"http_{response.status_code}"}
+    if '"error"' in response.text and '"result"' not in response.text:
+        return {"validated": False, "error": "provider_rejected_request"}
+    return {"validated": True, "error": ""}
+
+
+def validate_fengniao(skill_dir, key=None):
+    path = Path(skill_dir)
+    token = key or read_user_environment(FENGNIAO_ENV_NAME)
+    tool = path / "scripts/tool.mjs"
+    if not tool.is_file() or not token:
+        return {"validated": False, "error": "missing_installation_or_key"}
+    environment = os.environ.copy()
+    environment[FENGNIAO_ENV_NAME] = token
+    params = json.dumps({"key": "京东"}, ensure_ascii=False)
+    code, out, _ = run(
+        ["node", str(tool), "call", "biz_fuzzy_search", "--params", params],
+        env=environment,
+    )
+    if code:
+        return {"validated": False, "error": "provider_validation_failed"}
+    try:
+        payload = json.loads(out)
+    except json.JSONDecodeError:
+        return {"validated": False, "error": "invalid_provider_response"}
+    valid = payload.get("code") == 20000
+    return {"validated": valid, "error": "" if valid else "provider_rejected_key_or_quota"}
+
+
+def enterprise_sources_ready(qcc, fengniao):
+    return all(qcc.get(field) for field in ("configured", "key_configured", "validated")) and all(
+        fengniao.get(field) for field in ("installed", "key_configured", "validated")
+    )
 
 
 def taobao_state(session):
@@ -173,25 +311,44 @@ def main():
         ok, detail = install_webcli()
         actions.append({"action": "install_webcli", "ok": ok, "detail": detail})
         doctor = webcli_doctor()
+    if not webcli_browser_ready(doctor) and args.install_missing and o2_path:
+        ok, detail = install_webcli_extension()
+        actions.append({"action": "install_webcli_extension", "ok": ok, "detail": detail})
+        doctor = webcli_doctor()
 
     config_path = Path(args.config)
     mcps = detect_mcp(config_path)
+    qcc = detect_qcc_mcp(config_path)
     fengniao = detect_fengniao(args.fengniao_skill_dir)
-    if not mcps and not fengniao["ready"] and args.install_missing:
-        ok, detail = install_qcc()
+    if not qcc["configured"] and args.install_missing:
+        ok, detail = install_qcc(config_path)
         actions.append({"action": "configure_qcc", "ok": ok, "detail": detail})
         mcps = detect_mcp(config_path)
+        qcc = detect_qcc_mcp(config_path)
+    if not fengniao["installed"] and args.install_missing:
+        ok, detail = install_fengniao()
+        actions.append({"action": "install_fengniao", "ok": ok, "detail": detail})
+        fengniao = detect_fengniao(args.fengniao_skill_dir)
 
-    taobao = taobao_state(args.session) if args.check_taobao and doctor.get("ok") else None
-    enterprise_ready = bool(mcps) or fengniao["ready"]
+    qcc_validation = validate_qcc(qcc)
+    fengniao_validation = validate_fengniao(fengniao["path"])
+    qcc["validated"] = qcc_validation["validated"]
+    qcc["validation_error"] = qcc_validation["error"]
+    fengniao["validated"] = fengniao_validation["validated"]
+    fengniao["validation_error"] = fengniao_validation["error"]
+
+    browser_ready = webcli_browser_ready(doctor)
+    taobao = taobao_state(args.session) if args.check_taobao and browser_ready else None
+    enterprise_ready = enterprise_sources_ready(qcc, fengniao)
     result = {
-        "ok": runtime["ok"] and packages["ok"] and bool(o2_path) and enterprise_ready and bool(doctor.get("ok")) and (taobao is None or bool(taobao.get("loggedIn"))),
+        "ok": runtime["ok"] and packages["ok"] and bool(o2_path) and enterprise_ready and browser_ready and (taobao is None or bool(taobao.get("loggedIn"))),
         "python": runtime,
         "python_packages": packages,
         "o2": {"installed": bool(o2_path), "path": o2_path},
         "enterprise_mcps": mcps,
+        "qcc": qcc,
         "fengniao": fengniao,
-        "webcli": doctor,
+        "webcli": {**doctor, "browser_ready": browser_ready},
         "taobao": taobao,
         "actions": actions,
         "next": [],
@@ -203,9 +360,15 @@ def main():
     if not o2_path:
         result["next"].append("Install o2 with the configured JD Python package index")
     if not enterprise_ready:
-        result["next"].append("Configure an enterprise-query MCP or install the Fengniao skill; FN_API_KEY is optional for private quota")
-    if not doctor.get("ok"):
-        result["next"].append("Install/repair o2 webcli and Browser Bridge")
+        result["next"].extend(
+            [
+                "必须同时提供并验证企查查 Key 与风鸟 Key，缺一不可。把两个 Key 一起发给 Codex，由 Codex 通过标准输入安全配置；不要自行设置环境变量。",
+                "企查查 Key：https://agent.qcc.com/profile/api-key",
+                "风鸟 Key：https://www.riskbird.com/center/apiKey",
+            ]
+        )
+    if not browser_ready:
+        result["next"].extend(browser_setup_instructions())
     if taobao and not taobao.get("loggedIn"):
         result["next"].append("Log in to Taobao in the connected Chrome tab, then rerun preflight")
     print(json.dumps(result, ensure_ascii=False, indent=2))
