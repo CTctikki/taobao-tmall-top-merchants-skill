@@ -1,12 +1,17 @@
 [CmdletBinding()]
 param(
     [switch]$SkipTaobaoCheck,
-    [switch]$ConfigureEnterpriseKeys
+    [switch]$ConfigureEnterpriseKeys,
+    [switch]$AuditOnly
 )
 
 $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $skillRoot = Split-Path -Parent $scriptRoot
+
+if ($AuditOnly -and $SkipTaobaoCheck) {
+    throw "-AuditOnly and -SkipTaobaoCheck cannot be combined."
+}
 
 function Get-CompatiblePython {
     $candidates = [System.Collections.Generic.List[string]]::new()
@@ -62,6 +67,9 @@ if ($ConfigureEnterpriseKeys) {
     }
 }
 $arguments = @((Join-Path $scriptRoot "preflight.py"), "--install-missing")
+if ($AuditOnly) {
+    $arguments += "--audit-only"
+}
 if (-not $SkipTaobaoCheck) {
     $arguments += "--check-taobao"
 }

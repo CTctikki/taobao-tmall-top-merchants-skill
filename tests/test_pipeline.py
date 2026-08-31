@@ -607,6 +607,25 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertIn("名单模式跳过第3至第7步", text)
         self.assertIn("不运行 `create_job.py`、`mine_taobao.py`、`audit_shops.py`、`audit_storefronts.py`", text)
 
+    def test_skill_routes_independent_review_mode(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        review = (ROOT / "references" / "review-mode.md").read_text(encoding="utf-8")
+        contract = (ROOT / "references" / "review-data-contract.md").read_text(encoding="utf-8")
+
+        self.assertIn("审核筛选模式", skill)
+        self.assertIn("不得并入用户指定名单模式", skill)
+        self.assertIn("scripts/review_workbook.py", skill)
+        self.assertIn("references/review-mode.md", skill)
+        self.assertIn("-AuditOnly", readme)
+        self.assertIn("审核", metadata)
+        for phrase in ["不要求企查查", "不要求风鸟", "唯一商品 ID", "18–22 秒", "待核验"]:
+            self.assertIn(phrase, review)
+        for phrase in ["stable_identity", "profile_result", "high_sales_links", "source_type"]:
+            self.assertIn(phrase, contract)
+        self.assertNotIn("近30天销量", review)
+
     def test_skill_requires_both_private_keys_and_guides_browser_bridge_setup(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

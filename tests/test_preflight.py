@@ -62,7 +62,7 @@ class PreflightTests(unittest.TestCase):
             skill_dir = Path(directory) / "company-search-fengniao"
             (skill_dir / "scripts").mkdir(parents=True)
             (skill_dir / "scripts" / "tool.mjs").write_text("", encoding="utf-8")
-            with patch.dict("os.environ", {}, clear=True):
+            with patch("preflight.read_user_environment", return_value=""):
                 result = detect_fengniao(skill_dir)
 
             self.assertTrue(result["installed"])
@@ -351,6 +351,47 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("--install-missing", script)
         self.assertIn("ConfigureEnterpriseKeys", script)
         self.assertIn("configure_enterprise_keys.py", script)
+
+    def test_audit_only_does_not_require_enterprise_sources(self):
+        result = preflight.build_status(
+            audit_only=True,
+            runtime={"ok": True},
+            packages={"ok": True},
+            o2_path="o2",
+            doctor={"ok": True},
+            browser_ready=True,
+            taobao={"ok": True, "loggedIn": True},
+            mcps=[],
+            qcc={"configured": False, "validated": False},
+            fengniao={"installed": False, "validated": False},
+            actions=[],
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["audit_only"])
+        self.assertNotIn("企查查 Key", "\n".join(result["next"]))
+
+    def test_normal_mode_still_requires_both_enterprise_sources(self):
+        result = preflight.build_status(
+            audit_only=False,
+            runtime={"ok": True},
+            packages={"ok": True},
+            o2_path="o2",
+            doctor={"ok": True},
+            browser_ready=True,
+            taobao=None,
+            mcps=[],
+            qcc={"configured": False, "validated": False},
+            fengniao={"installed": False, "validated": False},
+            actions=[],
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("企查查 Key", "\n".join(result["next"]))
+
+    def test_bootstrap_rejects_audit_only_with_skip_taobao(self):
+        script = (ROOT / "scripts" / "bootstrap.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("[switch]$AuditOnly", script)
+        self.assertIn("-AuditOnly and -SkipTaobaoCheck cannot be combined", script)
+        self.assertIn('"--audit-only"', script)
 
 if __name__ == "__main__":
     unittest.main()

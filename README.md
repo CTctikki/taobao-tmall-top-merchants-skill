@@ -6,6 +6,7 @@
 
 - **类目发现模式**：执行候选发现、店铺SPU结构审计和默认Top30优质短名单规则。
 - **用户指定名单模式**：用户给出的店铺全部进入正式招商表，不需要固定Excel模板或专用导入脚本；Codex自行提取、去重并保留原始输入。
+- **审核筛选模式**：读取已有审核工作簿，访问表内店铺并回填引入画像和优先级；与不打开淘宝的用户指定名单模式相互独立。
 
 名单模式不填写或推断SPU、店内占比、付款人数展示下限和Top30结论。工作簿会明确说明该名单由用户指定，不代表已通过主营准入审计。
 
@@ -49,9 +50,19 @@ powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1
 powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1 -SkipTaobaoCheck
 ```
 
+审核已有工作簿时使用不检查企业 Key 的独立环境入口：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1 -AuditOnly
+python scripts/review_workbook.py "审核筛选.xlsx" --output "审核筛选_已完成.xlsx" --owner "负责人" --dry-run
+python scripts/review_workbook.py "审核筛选.xlsx" --output "审核筛选_已完成.xlsx" --owner "负责人"
+```
+
+审核模式按语义识别列名，重复店铺只访问一次；首页无商品时依次回退店内热销页和公开店铺列表页。详细规则见 `references/review-mode.md`。
+
 ## 首次使用
 
-正式任务必须同时拥有企查查 Key 和风鸟 Key：
+类目发现和用户指定名单任务必须同时拥有企查查 Key 和风鸟 Key；审核筛选模式不执行企业查询，因此不要求这两个 Key：
 
 - 企查查：<https://agent.qcc.com/profile/api-key>
 - 风鸟：<https://www.riskbird.com/center/apiKey>
@@ -69,8 +80,8 @@ powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1 -SkipTaobaoCheck
 ## 依赖
 
 - Windows PowerShell 与 `winget`（仅在需要自动安装 Python 时使用）
-- 已登录淘宝的 Chrome 会话（仅类目发现模式需要）
-- 已验证的 `qcc-company` MCP 与风鸟企业查询 Skill，两者缺一不可
+- 已登录淘宝的 Chrome 会话（类目发现模式和审核筛选模式需要）
+- 已验证的 `qcc-company` MCP 与风鸟企业查询 Skill，两者缺一不可（审核筛选模式除外）
 
 `bootstrap.ps1` 会自动检测并尽量静默安装以下运行环境：
 
@@ -88,7 +99,7 @@ powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1 -SkipTaobaoCheck
 
 - `SKILL.md`：Agent 执行协议
 - `scripts/`：预检、采集、审计、企业补全、工作簿生成
-- `references/`：流程、数据契约、MCP安装、类目规则
+- `references/`：流程、数据契约、审核模式、MCP安装、类目规则
 - `tests/`：离线单元测试
 
 ## 合规

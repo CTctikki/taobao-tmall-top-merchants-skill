@@ -9,6 +9,9 @@ description: 为商品类目自动发现淘宝/天猫top商家，或把用户直
 
 - **类目发现模式**：用户只提供商品类目并要求寻找优质商家时，执行淘宝候选发现、店铺商品结构审计和正式准入门槛。
 - **用户指定名单模式**：用户直接提供一个或多个店铺名、多个链接、文本、表格、电子表格或混合信息时，由Codex自行提取和去重，不要求固定文件格式或专用解析脚本。若输入同时含类目和明确店铺名单，以名单为准；只有用户明确要求扩充时才继续发现新店。
+- **审核筛选模式**：用户提供已有店铺行的审核工作簿，并要求核验“是否符合引入画像”或“引入优先级”时，运行 `scripts/review_workbook.py`，访问店铺公开页面核验相关 SPU 与高销链接。详细规则见 `references/review-mode.md` 和 `references/review-data-contract.md`。
+
+审核筛选模式不得并入用户指定名单模式。名单模式明确禁止打开淘宝和推断 SPU；审核筛选模式必须基于店铺页面证据审核，且不执行企业主体查询。
 
 用户指定名单模式下，名单中的店铺全部进入正式招商商家，不运行 `mine_taobao.py`、`audit_shops.py`，也不为补企业字段触发淘宝页面。不得补造目标SPU、店内目标商品占比、付款人数展示下限或Top30结论；工作簿必须明确标注“用户指定名单，不代表Top30或主营准入达标”。若用户同时提供营业执照截图、资质页截图或执照文字，直接提取平台营业执照公司名和信用代码写入 `platform_qualifications.json`，不再按店铺名猜主体。
 
@@ -22,6 +25,7 @@ Codex应从原始信息中尽量归一化：类目、店铺名、平台、店铺
 
 ## 首次使用硬门槛
 
+- 本节企业 Key 硬门槛适用于类目发现模式和用户指定名单模式。审核筛选模式运行 `bootstrap.ps1 -AuditOnly`，不要求企查查 Key 或风鸟 Key，但必须通过 Chrome、o2、webcli、Browser Bridge 和淘宝登录态检查。
 - 正式任务必须同时提供并验证成功 **企查查 Key + 风鸟 Key**，缺一不可；风鸟公共额度不能替代用户自己的 Key，爱企查、天眼查或其他企业 MCP 也不能替代指定的 `qcc-company`。
 - 缺少任一 Key 时先停止任务，并同时给出企查查 <https://agent.qcc.com/profile/api-key> 与风鸟 <https://www.riskbird.com/center/apiKey>。请用户把两个 Key 一起发给 Codex，不要让用户自行配置环境变量。
 - Codex 收到两个 Key 后不得复述。启动 `python scripts/configure_enterprise_keys.py`，只通过标准输入依次传入企查查 Key 和风鸟 Key，再运行 `bootstrap.ps1`；Key 禁止进入命令参数、日志、工作簿、文档、Git或最终回复。
@@ -31,6 +35,8 @@ Codex应从原始信息中尽量归一化：类目、店铺名、平台、店铺
 ## 执行顺序
 
 以下第3至第7步仅用于类目发现模式。名单模式跳过第3至第7步，不运行 `create_job.py`、`mine_taobao.py`、`audit_shops.py`、`audit_storefronts.py`；完成输入归一化后直接执行企业候选核验和名单模式工作簿生成。名单模式没有标准采集任务JSON时，不强行运行 `verify_job.py`，但仍必须完成字段检查、公式重算、全表视觉检查和密钥扫描。
+
+审核筛选模式独立执行：先运行 `bootstrap.ps1 -AuditOnly`，再运行 `review_workbook.py --dry-run` 确认语义列、负责人和唯一店铺数，最后运行正式审核。它不调用 `enrich_companies.py`、`run_fengniao.py` 或企业主体核验流程；遇登录、验证码、隐藏 `_____tmd__`、Bridge 断连或兼容故障时保存检查点并暂停，不得判低。
 
 1. 先判断模式。类目发现模式运行 `powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1`；用户指定名单模式运行同一脚本并加 `-SkipTaobaoCheck`，只验证工作簿和企业数据源环境，不打开淘宝页面。脚本通过 `preflight.py --install-missing` 检查并补齐必要依赖、风鸟 Skill、`qcc-company` 与 webcli 扩展；自动安装失败时停止并给出明确修复提示，不得跳过环境检查。
 2. 只有 `qcc-company` 与风鸟 Skill 均已安装、两个用户私有 Key 均已配置且轻量验证成功，企业环境才算就绪。详见 `references/mcp-setup.md`。

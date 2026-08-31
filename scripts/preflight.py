@@ -267,6 +267,71 @@ def enterprise_sources_ready(qcc, fengniao):
     )
 
 
+def review_structure_status(root=None):
+    skill_root = Path(root or Path(__file__).resolve().parents[1])
+    required = [
+        "SKILL.md",
+        "scripts/review_workbook.py",
+        "scripts/audit_review_shops.py",
+        "references/review-mode.md",
+        "references/review-data-contract.md",
+    ]
+    missing = [item for item in required if not (skill_root / item).is_file()]
+    return {"ok": not missing, "missing": missing}
+
+
+def build_status(
+    *, audit_only, runtime, packages, o2_path, doctor, browser_ready, taobao,
+    mcps, qcc, fengniao, actions, review_structure=None,
+):
+    enterprise_ready = enterprise_sources_ready(qcc, fengniao)
+    structure = review_structure or {"ok": True, "missing": []}
+    required_ready = (
+        runtime["ok"]
+        and packages["ok"]
+        and bool(o2_path)
+        and browser_ready
+        and (taobao is None or bool(taobao.get("loggedIn")))
+        and (structure["ok"] if audit_only else enterprise_ready)
+    )
+    result = {
+        "ok": required_ready if audit_only else required_ready and enterprise_ready,
+        "audit_only": audit_only,
+        "python": runtime,
+        "python_packages": packages,
+        "o2": {"installed": bool(o2_path), "path": o2_path},
+        "enterprise_mcps": mcps,
+        "qcc": qcc,
+        "fengniao": fengniao,
+        "webcli": {**doctor, "browser_ready": browser_ready},
+        "taobao": taobao,
+        "review_structure": structure,
+        "actions": actions,
+        "next": [],
+    }
+    if not runtime["ok"]:
+        result["next"].append("Install Python 3.11 or newer, then rerun scripts/bootstrap.ps1")
+    if not packages["ok"]:
+        result["next"].append("Install required Python packages from requirements.txt")
+    if not o2_path:
+        result["next"].append("Install o2 with the configured JD Python package index")
+    if not audit_only and not enterprise_ready:
+        result["next"].extend(
+            [
+                "必须同时提供并验证企查查 Key 与风鸟 Key，缺一不可。把两个 Key 一起发给 Codex，由 Codex 通过标准输入安全配置；不要自行设置环境变量。",
+                "企查查 Key：https://agent.qcc.com/profile/api-key",
+                "风鸟 Key：https://www.riskbird.com/center/apiKey",
+            ]
+        )
+    if not browser_ready:
+        result["next"].extend(browser_setup_instructions())
+    if taobao and not taobao.get("loggedIn"):
+        result["next"].append("Log in to Taobao in the connected Chrome tab, then rerun preflight")
+    if audit_only and not structure["ok"]:
+        result["next"].append("Restore missing review-mode Skill files: " + ", ".join(structure["missing"]))
+    return result
+
+
 def taobao_state(session):
     o2 = find_o2()
     if not o2:
@@ -289,6 +354,7 @@ def main():
     parser.add_argument("--session", default="top_merchants_preflight")
     parser.add_argument("--fengniao-skill-dir")
     parser.add_argument("--install-missing", action="store_true")
+    parser.add_argument("--audit-only", action="store_true")
     args = parser.parse_args()
 
     runtime = python_runtime_status()
@@ -317,60 +383,47 @@ def main():
         doctor = webcli_doctor()
 
     config_path = Path(args.config)
-    mcps = detect_mcp(config_path)
-    qcc = detect_qcc_mcp(config_path)
-    fengniao = detect_fengniao(args.fengniao_skill_dir)
-    if not qcc["configured"] and args.install_missing:
-        ok, detail = install_qcc(config_path)
-        actions.append({"action": "configure_qcc", "ok": ok, "detail": detail})
+    if args.audit_only:
+        mcps = []
+        qcc = {"configured": False, "key_configured": False, "validated": False, "skipped": True}
+        fengniao = {"installed": False, "key_configured": False, "validated": False, "skipped": True}
+    else:
         mcps = detect_mcp(config_path)
         qcc = detect_qcc_mcp(config_path)
-    if not fengniao["installed"] and args.install_missing:
-        ok, detail = install_fengniao()
-        actions.append({"action": "install_fengniao", "ok": ok, "detail": detail})
         fengniao = detect_fengniao(args.fengniao_skill_dir)
+        if not qcc["configured"] and args.install_missing:
+            ok, detail = install_qcc(config_path)
+            actions.append({"action": "configure_qcc", "ok": ok, "detail": detail})
+            mcps = detect_mcp(config_path)
+            qcc = detect_qcc_mcp(config_path)
+        if not fengniao["installed"] and args.install_missing:
+            ok, detail = install_fengniao()
+            actions.append({"action": "install_fengniao", "ok": ok, "detail": detail})
+            fengniao = detect_fengniao(args.fengniao_skill_dir)
 
-    qcc_validation = validate_qcc(qcc)
-    fengniao_validation = validate_fengniao(fengniao["path"])
-    qcc["validated"] = qcc_validation["validated"]
-    qcc["validation_error"] = qcc_validation["error"]
-    fengniao["validated"] = fengniao_validation["validated"]
-    fengniao["validation_error"] = fengniao_validation["error"]
+        qcc_validation = validate_qcc(qcc)
+        fengniao_validation = validate_fengniao(fengniao["path"])
+        qcc["validated"] = qcc_validation["validated"]
+        qcc["validation_error"] = qcc_validation["error"]
+        fengniao["validated"] = fengniao_validation["validated"]
+        fengniao["validation_error"] = fengniao_validation["error"]
 
     browser_ready = webcli_browser_ready(doctor)
     taobao = taobao_state(args.session) if args.check_taobao and browser_ready else None
-    enterprise_ready = enterprise_sources_ready(qcc, fengniao)
-    result = {
-        "ok": runtime["ok"] and packages["ok"] and bool(o2_path) and enterprise_ready and browser_ready and (taobao is None or bool(taobao.get("loggedIn"))),
-        "python": runtime,
-        "python_packages": packages,
-        "o2": {"installed": bool(o2_path), "path": o2_path},
-        "enterprise_mcps": mcps,
-        "qcc": qcc,
-        "fengniao": fengniao,
-        "webcli": {**doctor, "browser_ready": browser_ready},
-        "taobao": taobao,
-        "actions": actions,
-        "next": [],
-    }
-    if not runtime["ok"]:
-        result["next"].append("Install Python 3.11 or newer, then rerun scripts/bootstrap.ps1")
-    if not packages["ok"]:
-        result["next"].append("Install required Python packages from requirements.txt")
-    if not o2_path:
-        result["next"].append("Install o2 with the configured JD Python package index")
-    if not enterprise_ready:
-        result["next"].extend(
-            [
-                "必须同时提供并验证企查查 Key 与风鸟 Key，缺一不可。把两个 Key 一起发给 Codex，由 Codex 通过标准输入安全配置；不要自行设置环境变量。",
-                "企查查 Key：https://agent.qcc.com/profile/api-key",
-                "风鸟 Key：https://www.riskbird.com/center/apiKey",
-            ]
-        )
-    if not browser_ready:
-        result["next"].extend(browser_setup_instructions())
-    if taobao and not taobao.get("loggedIn"):
-        result["next"].append("Log in to Taobao in the connected Chrome tab, then rerun preflight")
+    result = build_status(
+        audit_only=args.audit_only,
+        runtime=runtime,
+        packages=packages,
+        o2_path=o2_path,
+        doctor=doctor,
+        browser_ready=browser_ready,
+        taobao=taobao,
+        mcps=mcps,
+        qcc=qcc,
+        fengniao=fengniao,
+        actions=actions,
+        review_structure=review_structure_status() if args.audit_only else None,
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     sys.exit(0 if result["ok"] else 2)
 
